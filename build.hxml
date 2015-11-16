@@ -1,0 +1,3 @@
+-main Main
+-neko gen.n
+-cmd neko gen.n wxWidgets-master/docs/doxygen/out/xml output wx wxPatch.xml
