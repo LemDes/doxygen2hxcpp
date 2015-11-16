@@ -316,6 +316,25 @@ class Main
 			return "Dynamic";
 		}
 		
+		if (cppType.indexOf("(") > -1)
+		{
+			
+			// returnType(*|T::*)(Type a, Type b)
+			var tmp = cppType.split("(");
+			var returnType = toHaxeType(tmp[0]);
+			
+			var paramString = tmp[tmp.length-1];
+			var parameters = paramString.substr(0,paramString.length-1).split(",");
+			
+			var type = "";
+			for (param in parameters)
+			{
+				type += toHaxeType(param.ltrim().split(" ")[0]) + " -> ";
+			}
+			type += returnType;
+			return type;
+		}
+		
 		if (cppType.indexOf("::") > -1)
 		{
 			var tmp = cppType.split("::");
@@ -445,16 +464,11 @@ class Main
 				
 			}
 		}
-		
 		return defval;
 	}
 	
-	private function toHaxeArgs (memberdef:Xml, a:String, b:String) : Args
+	private function toHaxeArgs (memberdef:Xml) : Args
 	{
-		//TODO: EvtHandler.bind and EvtHandler.callAfter generate invalid signature (_:Void(T::*method)(T1, _:...), x1:T1, _:haxe.extern.Rest<Dynamic>)
-		//TODO: same for Array.sortedArray: (first:Int(*)(T, compareFunction:T)
-		//TODO: String.pad wrong arg generation ' ':UniChar instead of chPad:Unichar = ' '
-		
 		var sep = function (s:String) : String
 		{
 			if (s.indexOf("::") > -1 && !s.startsWith("std::"))
@@ -479,20 +493,18 @@ class Main
 			var type = toHaxeType(getType(e));
 			var array = getXmlContent(e,"array");
 			var value = getDefaultValue(e);
-			
 			if (array != "")
 			{
 				var array_number = array.split("[").length - 1;
-				
 				if (array_number == 0)
 				{
 					if (array.split(" ").length == 1)
 					{
-						// Ignore array value
+						// Ignore array value ?
 					}
 					else
 					{
-						//TODO: the arg is a function
+						// TODO  the arg is a call to a function
 					}
 				}
 				else
@@ -505,21 +517,20 @@ class Main
 				}
 			}
 			
-			argsName.push(getXmlContent(e,"declname"));
-			argsType.push(type);
+			argsType.push(type);			
+			if (type == "haxe.extern.Rest<Dynamic>")
+				argsName.push("otherArgs");
+			else
+				argsName.push(getXmlContent(e,"declname"));
 			argsValue.push(value);
-			//TODO: default value in wxList value_type() = T*
+			// TODO default value in wxList value_type() = T*
 		}
 		
 		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
 	}
 	
 	private function argstringToArgs (argstring:String) : Args
-	{
-		//TODO: EvtHandler.bind and EvtHandler.callAfter generate invalid signature (_:Void(T::*method)(T1, _:...), x1:T1, _:haxe.extern.Rest<Dynamic>)
-		//TODO: same for Array.sortedArray: (first:Int(*)(T, compareFunction:T)
-		//TODO: String.pad wrong arg generation ' ':UniChar instead of chPad:Unichar = ' '
-		
+	{	
 		var sep = function (s:String) : String
 		{
 			if (s.indexOf("::") > -1 && !s.startsWith("std::"))
@@ -554,7 +565,7 @@ class Main
 			return { argsName: [], argsType: [], argsValue: [] };
 		}
 		
-		var args = argstring.substr(1, argstring.length-2).split(','); //TODO: not reliable, redo function
+		var args = argstring.substr(1, argstring.length-2).split(',');
 		var haxeArgs = [];
 		
 		for (arg in args)
@@ -741,7 +752,7 @@ class Main
 								var name = getXmlContent(memberdef, "name"); //TODO: if name is create will bug with the static create function of the constructor
 								var isConstructor = name == realName;
 								var isDestructor = name.startsWith("~") && name.substr(1) == realName; //TODO: doesn't work on templated classes
-								var args = toHaxeArgs(memberdef, realName, name);
+								var args = toHaxeArgs(memberdef);
 								var type = toHaxeType(getType(memberdef));
 								var native = (if (stat) '$realName::' else "") + name;
 								
