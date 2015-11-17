@@ -14,6 +14,7 @@ using StringTools;
 typedef Args = { argsName:Array<String>, argsType:Array<String>, argsValue:Array<String> };
 typedef Fn = { returnType:String, args:Args };
 typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml };
+typedef VariableData = { name:String, initializer:String, type:String, doc:Xml };
 
 class PatchFile
 {
@@ -728,11 +729,13 @@ class Main
 		
 		var file = getOutputFileStream(pack, haxeName);
 		
-		var statics = new Array<FunctionData>();
+		var functions_stat = new Array<FunctionData>();
 		var functions = new Array<FunctionData>();
+		var variables_stat = new Array<VariableData>();
+		var variables = new Array<VariableData>();
 		var typedefs = new Array<{ name:String, value:String }>();
-		
-		//TODO: group together to do function overloading, also check double functions with and without const modifier
+		var enums = new Array<{ name:String, values: Array<String> }>();
+
 		for (section in compounddef.elementsNamed("sectiondef"))
 		{
 			switch (section.get("kind"))
@@ -781,13 +784,15 @@ class Main
 									continue;
 								}
 								
+								var obj = { native: native, name: name, args: args, returnType: type, doc: memberdef };
+
 								if (stat)
 								{
-									statics.push({ native: native, name: name, args: args, returnType: type, doc: memberdef });
+									functions_stat.push(obj);
 								}
 								else
 								{
-									functions.push({ native: native, name: name, args: args, returnType: type, doc: memberdef });
+									functions.push(obj);
 								}
 							
 							case "typedef":
@@ -900,7 +905,7 @@ class Main
 									
 									for (i in 0...values.length)
 									{
-										values[i] = values[i].substr(prefix.length);
+										values[i] = values[i].substr(prefix.length); //TODO: also remove 'wx' (basePack)
 									}
 									
 									if (prefix.endsWith("_"))
@@ -912,16 +917,25 @@ class Main
 									name = prefix;
 								}
 								
-								var codeInHaxe = 'enum ${toHaxeName(name)}\n{\n' + values.join("\n") + "\n}";
+								//TODO: if no need to find prefix still remove enum name from values' string
+
+								enums.push({ name: name, values: values });
 								
 							case "variable":
-								var stat = memberdef.get("static") == "yes";
 								var name = getXmlContent(memberdef, "name");
 								var initializer = getXmlContent(memberdef, "initializer");
 								var type = toHaxeType(getType(memberdef));
 								
-								//TODO: add to class, don't forget doc
-								var codeInHaxe = 'public ${if (stat) "static " else ""}var $name : $type${if (initializer != "") " " + initializer else ""};';
+								var obj = { name: name, initializer: initializer, type: type, doc: memberdef };
+
+								if (memberdef.get("static") == "yes")
+								{
+									variables_stat.push(obj);
+								}
+								else
+								{
+									variables.push(obj);
+								}
 															
 							default:
 								trace("ignored (for now) memberdef type: " + memberdef.get("kind") + " in " + realName);
@@ -952,6 +966,21 @@ class Main
 			writeLine(file, 'typedef ${tp.name} = ${toHaxeType(tp.value)};');
 		}
 
+		// Enums //TODO: needs its own file?
+		for (en in enums)
+		{
+			writeLine(file, "");
+			writeLine(file, 'enum ${toHaxeName(en.name)}');
+			openBracket(file);
+
+			for (value in en.values)
+			{
+				writeLine(file, value);
+			}
+
+			closeBracket(file);
+		}
+
 		// Class header
 		writeLine(file, "");
 		writeLine(file, '@:include("$include")');
@@ -959,6 +988,14 @@ class Main
 		writeLine(file, 'extern class _$haxeName${if (sup != "") " extends " + sup + "._" + sup else ""}');
 		openBracket(file, false);
 
+		for (variable in variables)
+		{
+			writeLine(file, "");
+			genDoc(variable.doc, file);
+			writeLine(file, '@:native("${variable.name}") public var ${toHaxeName(variable.name, true)} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+		}
+
+		//TODO: group together to do function overloading, also check double functions with and without const modifier
 		for (fn in functions)
 		{
 			writeLine(file, "");
@@ -974,9 +1011,16 @@ class Main
 		genDoc(compounddef, file);
 		writeLine(file, '@:native("cpp.Reference<$realName>")');
 		writeLine(file, 'extern class $haxeName extends _$haxeName');
-		openBracket(file, statics.length == 0);
+		openBracket(file, (variables_stat.length == 0 && functions_stat.length == 0));
+
+		for (variable in variables_stat)
+		{
+			writeLine(file, "");
+			genDoc(variable.doc, file);
+			writeLine(file, '@:native("$realName::${variable.name}") public var ${toHaxeName(variable.name, true)} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+		}
 		
-		for (fn in statics)
+		for (fn in functions_stat)
 		{
 			writeLine(file, "");
 			genDoc(fn.doc, file);
