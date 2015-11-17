@@ -13,6 +13,7 @@ using StringTools;
 
 typedef Args = { argsName:Array<String>, argsType:Array<String>, argsValue:Array<String> };
 typedef Fn = { returnType:String, args:Args };
+typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml };
 
 class PatchFile
 {
@@ -500,11 +501,11 @@ class Main
 				{
 					if (array.split(" ").length == 1)
 					{
-						// Ignore array value ?
+						//TODO: Ignore array value?
 					}
 					else
 					{
-						// TODO  the arg is a call to a function
+						//TODO: the arg is a call to a function
 					}
 				}
 				else
@@ -519,11 +520,15 @@ class Main
 			
 			argsType.push(type);			
 			if (type == "haxe.extern.Rest<Dynamic>")
+			{
 				argsName.push("otherArgs");
+			}
 			else
+			{
 				argsName.push(getXmlContent(e,"declname"));
+			}
 			argsValue.push(value);
-			// TODO default value in wxList value_type() = T*
+			//TODO: default value in wxList value_type() = T*
 		}
 		
 		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
@@ -565,7 +570,7 @@ class Main
 			return { argsName: [], argsType: [], argsValue: [] };
 		}
 		
-		var args = argstring.substr(1, argstring.length-2).split(',');
+		var args = argstring.substr(1, argstring.length-2).split(','); //TODO: not reliable, redo function
 		var haxeArgs = [];
 		
 		for (arg in args)
@@ -723,14 +728,9 @@ class Main
 		
 		var file = getOutputFileStream(pack, haxeName);
 		
-		var statics = new Array<{ args:Args, name:String, returnType:String, doc:Xml }>();
-		
-		writeLine(file, 'package${genPackage(pack)};');
-		writeLine(file, "");
-		writeLine(file, '@:include("$include")');
-		writeLine(file, '@:native("$realName")');
-		writeLine(file, 'extern class _$haxeName${if (sup != "") " extends " + sup + "._" + sup else ""}');
-		openBracket(file, false);
+		var statics = new Array<FunctionData>();
+		var functions = new Array<FunctionData>();
+		var typedefs = new Array<{ name:String, value:String }>();
 		
 		//TODO: group together to do function overloading, also check double functions with and without const modifier
 		for (section in compounddef.elementsNamed("sectiondef"))
@@ -781,19 +781,14 @@ class Main
 									continue;
 								}
 								
-								writeLine(file, "");
-								
 								if (stat)
 								{
-									statics.push({ name: name, args: args, returnType: type, doc: memberdef });
+									statics.push({ native: native, name: name, args: args, returnType: type, doc: memberdef });
 								}
 								else
 								{
-									// will be printed in the cpp.Reference class
-									genDoc(memberdef, file);
+									functions.push({ native: native, name: name, args: args, returnType: type, doc: memberdef });
 								}
-								
-								writeLine(file, '@:native("$native") public ${if (stat) "static " else ""}function ${toHaxeName(name, true)} ${toArgString(args)} : $type;');
 							
 							case "typedef":
 								// syntax: typedef [const] type realName::name;
@@ -820,8 +815,7 @@ class Main
 									def = def.substr(0, def.length - longName.length);
 								}
 								
-								//TODO: add in class' file								
-								var codeInHaxe = 'typdef $name = ${toHaxeType(def)};';
+								typedefs.push({ name: name, value: def });
 								
 							case "enum":							
 								var stat = memberdef.get("static") == "yes";
@@ -939,7 +933,7 @@ class Main
 					continue;
 					
 				case "typedef", "friend":
-					// ignore
+					// ignore //TODO: igore typedef?!
 					continue;
 				
 				default:
@@ -948,26 +942,51 @@ class Main
 			}
 		}
 		
-		closeBracket(file);
-		
+		// File header
+		writeLine(file, 'package${genPackage(pack)};');
+
+		// Typedefs
+		for (tp in typedefs)
+		{
+			writeLine(file, "");
+			writeLine(file, 'typedef ${tp.name} = ${toHaxeType(tp.value)};');
+		}
+
+		// Class header
 		writeLine(file, "");
+		writeLine(file, '@:include("$include")');
+		writeLine(file, '@:native("$realName")');
+		writeLine(file, 'extern class _$haxeName${if (sup != "") " extends " + sup + "._" + sup else ""}');
+		openBracket(file, false);
+
+		for (fn in functions)
+		{
+			writeLine(file, "");
+			genDoc(fn.doc, file);
+			writeLine(file, '@:native("${fn.native}") public function ${toHaxeName(fn.name, true)} ${toArgString(fn.args)} : ${fn.returnType};');
+		}
+
+		// End of class
+		closeBracket(file);
+		writeLine(file, "");
+
+		// Ref class
 		genDoc(compounddef, file);
 		writeLine(file, '@:native("cpp.Reference<$realName>")');
 		writeLine(file, 'extern class $haxeName extends _$haxeName');
 		openBracket(file, statics.length == 0);
 		
-		for (stat in statics)
+		for (fn in statics)
 		{
 			writeLine(file, "");
-			genDoc(stat.doc, file);
-			writeLine(file, 'public static inline function ${toHaxeName(stat.name, true)} ${toArgString(stat.args)} : ${stat.returnType}');
-			openBracket(file);
-			writeLine(file, '${if (stat.returnType != "Void") "return " else ""}_$haxeName.${toHaxeName(stat.name, true)}(${stat.args.argsName.join(", ")});');
-			closeBracket(file);
+			genDoc(fn.doc, file);
+			writeLine(file, '@:native("${fn.native}") public static function ${toHaxeName(fn.name, true)} ${toArgString(fn.args)} : ${fn.returnType};');
 		}
 		
+		// End of ref class
 		closeBracket(file);
 		
+		// End of file
 		file.flush();
 		file.close();
 	}
@@ -1030,7 +1049,8 @@ class Main
 		
 		file.flush();
 		file.close();
-		//TODO: see unionwx_any_value_buffer.xml
-		// expected output: package wx; typedef AnyValueBuffer = haxe.extern.Either<Function, wx.Byte>;
+
+		// see unionwx_any_value_buffer.xml
+		//TODO: got Either<Dynamic, Byte> instead of Either<Function, Byte>
 	}
 }
