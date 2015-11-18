@@ -14,7 +14,7 @@ using StringTools;
 typedef Args = { argsName:Array<String>, argsType:Array<String>, argsValue:Array<String> };
 typedef Fn = { returnType:String, args:Args };
 typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml };
-typedef VariableData = { name:String, initializer:String, type:String, doc:Xml };
+typedef VariableData = { name:String, native:String, initializer:String, type:String, doc:Xml };
 
 class PatchFile
 {
@@ -784,7 +784,7 @@ class Main
 									continue;
 								}
 								
-								var obj = { native: native, name: name, args: args, returnType: type, doc: memberdef };
+								var obj = { native: native, name: toHaxeName(name, true), args: args, returnType: type, doc: memberdef };
 
 								if (stat)
 								{
@@ -919,14 +919,14 @@ class Main
 								
 								//TODO: if no need to find prefix still remove enum name from values' string
 
-								enums.push({ name: name, values: values });
+								enums.push({ name: toHaxeName(name), values: values });
 								
 							case "variable":
 								var name = getXmlContent(memberdef, "name");
 								var initializer = getXmlContent(memberdef, "initializer");
 								var type = toHaxeType(getType(memberdef));
 								
-								var obj = { name: name, initializer: initializer, type: type, doc: memberdef };
+								var obj = { name: toHaxeName(name, true), native: name, initializer: initializer, type: type, doc: memberdef };
 
 								if (memberdef.get("static") == "yes")
 								{
@@ -960,6 +960,9 @@ class Main
 		writeLine(file, 'package${genPackage(pack)};');
 
 		// Typedefs
+		typedefs.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
 		for (tp in typedefs)
 		{
 			writeLine(file, "");
@@ -967,10 +970,13 @@ class Main
 		}
 
 		// Enums //TODO: needs its own file?
+		enums.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
 		for (en in enums)
 		{
 			writeLine(file, "");
-			writeLine(file, 'enum ${toHaxeName(en.name)}');
+			writeLine(file, 'enum ${en.name}');
 			openBracket(file);
 
 			for (value in en.values)
@@ -988,19 +994,25 @@ class Main
 		writeLine(file, 'extern class _$haxeName${if (sup != "") " extends " + sup + "._" + sup else ""}');
 		openBracket(file, false);
 
+		variables.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
 		for (variable in variables)
 		{
 			writeLine(file, "");
 			genDoc(variable.doc, file);
-			writeLine(file, '@:native("${variable.name}") public var ${toHaxeName(variable.name, true)} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+			writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
 		}
 
 		//TODO: group together to do function overloading, also check double functions with and without const modifier
+		functions.sort(function (a, b) {
+			return -1 * Reflect.compare(a.name, b.name);
+		});
 		for (fn in functions)
 		{
 			writeLine(file, "");
 			genDoc(fn.doc, file);
-			writeLine(file, '@:native("${fn.native}") public function ${toHaxeName(fn.name, true)} ${toArgString(fn.args)} : ${fn.returnType};');
+			writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
 		}
 
 		// End of class
@@ -1013,18 +1025,24 @@ class Main
 		writeLine(file, 'extern class $haxeName extends _$haxeName');
 		openBracket(file, (variables_stat.length == 0 && functions_stat.length == 0));
 
+		variables_stat.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
 		for (variable in variables_stat)
 		{
 			writeLine(file, "");
 			genDoc(variable.doc, file);
-			writeLine(file, '@:native("$realName::${variable.name}") public var ${toHaxeName(variable.name, true)} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+			writeLine(file, '@:native("$realName::${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
 		}
 		
+		functions_stat.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
 		for (fn in functions_stat)
 		{
 			writeLine(file, "");
 			genDoc(fn.doc, file);
-			writeLine(file, '@:native("${fn.native}") public static function ${toHaxeName(fn.name, true)} ${toArgString(fn.args)} : ${fn.returnType};');
+			writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
 		}
 		
 		// End of ref class
