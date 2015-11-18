@@ -13,8 +13,13 @@ using StringTools;
 
 typedef Args = { argsName:Array<String>, argsType:Array<String>, argsValue:Array<String> };
 typedef Fn = { returnType:String, args:Args };
+typedef TypedefData = { name:String, value: String, doc:Xml };
 typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml, overload:Bool };
 typedef VariableData = { name:String, native:String, initializer:String, type:String, doc:Xml };
+typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat:Array<VariableData>, functions:Array<FunctionData>, functions_stat:Array<FunctionData>, doc:Xml, sup:String, native:String, include:String };
+typedef EnumData = { name:String, values:Array<String>, doc:Xml };
+typedef UnionData = { name:String, values:String, doc:Xml };
+typedef FileData = { pack:Array<String>, name:String, typedefs:Array<TypedefData>, classes:Array<ClassData>, enums:Array<EnumData>, unions:Array<UnionData> };
 
 class PatchFile
 {
@@ -38,9 +43,11 @@ class Main
 		new Main();
 	}
 	
+	private var files : Map<String, FileData>;
 	private var patches : PatchFile;
 	private var used = new Map<String, Bool>();
 	private var nb = 0;
+	private var counter = { classes: 0, typedefs: 0, unions: 0, enums: 0 };
 	private var isCurrentlySkipping : Bool = null;
 	private var inputPath : String;
 	private var outputPath : String;
@@ -91,6 +98,8 @@ class Main
 			FileSystem.createDirectory(outputPath);
 		}
 		
+		files = new Map<String, FileData>();
+
 		var index = Xml.parse(File.getContent(Path.join([ inputPath, "index.xml" ]))).firstElement();
 		
 		if (!index.get("version").startsWith("1.8."))
@@ -136,9 +145,32 @@ class Main
 			}
 		}
 		
-		Lib.println('\nDone! $nb files generated.');
+		Lib.println("");
+		var i = 0;
+		for (f in files)
+		{
+			i++;
+			Lib.print('\r$i              ');
+			genFile(f);
+		}
+
+		Lib.println('\rDone! $nb files generated from ${counter.classes} class(es), ${counter.typedefs} typedef(s), ${counter.enums} enum(s) and ${counter.unions} union(s).');
 	}
-	
+
+	private function getFile (name:String) : FileData
+	{
+		if (files.exists(name))
+		{
+			return files.get(name);
+		}
+		else
+		{
+			var f:FileData = { unions:[], typedefs: [], pack: [], name: name, enums: [], classes: [] };
+			files.set(name, f);
+			return f;
+		}
+	}
+
 	private function getOutputFileStream (pack:Array<String>, classname:String) : FileOutput
 	{
 		var pack = pack.copy();
@@ -734,29 +766,29 @@ class Main
 	{
 		//TODO: templated sub class, eg. List<T>::iterator
 		//TODO: cannot return generic version of templated class in haxe, see Bitmap.getHandlers():List missing the <T>
-		
+
 		var realName = getXmlContent(compounddef, "compoundname"); //TODO check what to put in @:native for templated classes, also to find (de)(con)structor
 		var haxeName = toHaxeName(realName);
-		
-		if (realName.indexOf(":") > -1)
+		var fileName = haxeName;
+
+		if (realName.indexOf("::") > -1)
 		{
-			//TODO: A::B, add class B to class A's file
-			//~ return;
+			var tmp = realName.split("::");
+			fileName = toHaxeName(tmp[0]);
+			realName = tmp[1];
+			haxeName = toHaxeName(realName);
 		}
-		
-		var pack = [basePack];
+
 		var sup = toHaxeName(getXmlContent(compounddef, "basecompoundref"));
 		var includes = getXmlContent(compounddef, "includes").split("/");
 		var include = includes.splice(includes.length-2, includes.length).join("/");
-		
-		var file = getOutputFileStream(pack, haxeName);
 		
 		var functions_stat = new Array<FunctionData>();
 		var functions = new Array<FunctionData>();
 		var variables_stat = new Array<VariableData>();
 		var variables = new Array<VariableData>();
-		var typedefs = new Array<{ name:String, value:String }>();
-		var enums = new Array<{ name:String, values: Array<String> }>();
+		var typedefs = new Array<TypedefData>();
+		var enums = new Array<EnumData>();
 
 		for (section in compounddef.elementsNamed("sectiondef"))
 		{
@@ -842,7 +874,7 @@ class Main
 									def = def.substr(0, def.length - longName.length);
 								}
 								
-								typedefs.push({ name: name, value: def });
+								typedefs.push({ name: name, value: def, doc: memberdef });
 								
 							case "enum":							
 								var stat = memberdef.get("static") == "yes";
@@ -940,8 +972,9 @@ class Main
 								}
 								
 								//TODO: if no need to find prefix still remove enum name from values' string
+								//TODO: need to update arg default values if enum values are modified
 
-								enums.push({ name: toHaxeName(name), values: values });
+								enums.push({ name: toHaxeName(name), values: values, doc: memberdef });
 								
 							case "variable":
 								var name = getXmlContent(memberdef, "name");
@@ -978,136 +1011,24 @@ class Main
 			}
 		}
 		
-		// File header
-		writeLine(file, 'package${genPackage(pack)};');
+		var c : ClassData = { name: haxeName, doc: compounddef, variables: variables, functions: functions, variables_stat: variables_stat, functions_stat: functions_stat, include: include, native: realName, sup: sup };
 
-		// Typedefs
-		typedefs.sort(function (a, b) {
-			return Reflect.compare(a.name, b.name);
-		});
-		for (tp in typedefs)
+		var f = getFile(fileName);
+		f.classes.push(c);
+		f.typedefs = f.typedefs.concat(typedefs);
+
+		for (e in enums)
 		{
-			writeLine(file, "");
-			writeLine(file, 'typedef ${tp.name} = ${toHaxeType(tp.value)};');
+			var f = getFile(e.name);
+			f.enums.push(e);
 		}
-
-		// Enums //TODO: needs its own file?
-		enums.sort(function (a, b) {
-			return Reflect.compare(a.name, b.name);
-		});
-		for (en in enums)
-		{
-			writeLine(file, "");
-			writeLine(file, 'enum ${en.name}');
-			openBracket(file);
-
-			for (value in en.values)
-			{
-				writeLine(file, value);
-			}
-
-			closeBracket(file);
-		}
-
-		// Class header
-		writeLine(file, "");
-		writeLine(file, '@:include("$include")');
-		writeLine(file, '@:native("$realName")');
-		writeLine(file, 'extern class _$haxeName${if (sup != "") " extends " + sup + "._" + sup else ""}');
-		openBracket(file, false);
-
-		variables.sort(function (a, b) {
-			return Reflect.compare(a.name, b.name);
-		});
-		for (variable in variables)
-		{
-			writeLine(file, "");
-			genDoc(variable.doc, file);
-			writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
-		}
-
-		//TODO: check double functions with and without const modifier
-		groupOverload(functions);
-		var inOverload = false;
-		for (fn in functions)
-		{
-			if (!inOverload)
-			{
-				writeLine(file, "");
-				genDoc(fn.doc, file);
-			}
-
-			if (fn.overload)
-			{
-				inOverload = true;
-
-				writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
-			}
-			else
-			{
-				inOverload = false;
-
-				writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
-			}
-		}
-
-		// End of class
-		closeBracket(file);
-		writeLine(file, "");
-
-		// Ref class
-		genDoc(compounddef, file);
-		writeLine(file, '@:native("cpp.Reference<$realName>")');
-		writeLine(file, 'extern class $haxeName extends _$haxeName');
-		openBracket(file, (variables_stat.length == 0 && functions_stat.length == 0));
-
-		variables_stat.sort(function (a, b) {
-			return Reflect.compare(a.name, b.name);
-		});
-		for (variable in variables_stat)
-		{
-			writeLine(file, "");
-			genDoc(variable.doc, file);
-			writeLine(file, '@:native("$realName::${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
-		}
-		
-		groupOverload(functions_stat);
-		var inOverload = false;
-		for (fn in functions_stat)
-		{
-			if (!inOverload)
-			{
-				writeLine(file, "");
-				genDoc(fn.doc, file);
-			}
-
-			if (fn.overload)
-			{
-				inOverload = true;
-
-				writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
-			}
-			else
-			{
-				inOverload = false;
-
-				writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
-			}
-		}
-		
-		// End of ref class
-		closeBracket(file);
-		
-		// End of file
-		file.flush();
-		file.close();
 	}
-	
+
 	private function getEithers (compounddef:Xml) : String
 	{
 		var it = compounddef.elementsNamed("sectiondef").next().elementsNamed("memberdef");
 		var types = new Array<String>();
-		
+
 		while (it.hasNext())
 		{
 			var memberdef = it.next();
@@ -1116,7 +1037,7 @@ class Main
 				var type = toHaxeType(getType(memberdef));
 				var argsstring = memberdef.elementsNamed("argsstring").next().firstChild().nodeValue;
 				var array_number = argsstring.split("[").length - 1;
-				
+
 				while (array_number > 0)
 				{
 					type = "Array<"+type+">";
@@ -1125,7 +1046,7 @@ class Main
 				types.push(type);
 			}
 		}
-		
+
 		if (types.length > 1)
 		{
 			var t2 = types.pop();
@@ -1140,29 +1061,168 @@ class Main
 		{
 			throw "Not an either if not at least 2 types";
 		}
-			
+
 		return null;
 	}
-	
+
 	private function buildUnion (compounddef:Xml) : Void
 	{
-		var realName = getXmlContent(compounddef, "compoundname");		
-		var haxeName = toHaxeName(realName);
-		
-		var pack = [basePack];
-		var sup = toHaxeName(getXmlContent(compounddef, "basecompoundref"));
-		var eithers = getEithers(compounddef);
-				
-		var file = getOutputFileStream(pack, haxeName);
-		
-		writeLine(file, 'package${genPackage(pack)};');
-		writeLine(file, "");
-		writeLine(file, 'typedef $haxeName = $eithers;');
-		
-		file.flush();
-		file.close();
-
 		// see unionwx_any_value_buffer.xml
 		//TODO: got Either<Dynamic, Byte> instead of Either<Function, Byte>
+
+		var name = toHaxeName(getXmlContent(compounddef, "compoundname"));
+		var eithers = getEithers(compounddef);
+
+		var u:UnionData = { name: name, values: eithers, doc: compounddef };
+		var f = getFile(name);
+		f.unions.push(u);
+	}
+
+	private function genFile (fd:FileData)
+	{
+		var pack = [basePack].concat(fd.pack);
+		var file = getOutputFileStream(pack, fd.name);
+
+		// File header
+		writeLine(file, 'package${genPackage(pack)};');
+
+		// Typedefs
+		fd.typedefs.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
+		for (tp in fd.typedefs)
+		{
+			counter.typedefs++;
+			writeLine(file, "");
+			writeLine(file, 'typedef ${tp.name} = ${toHaxeType(tp.value)};');
+		}
+
+		// Enums //TODO: needs its own file?
+		fd.enums.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
+		for (en in fd.enums)
+		{
+			counter.enums++;
+			writeLine(file, "");
+			writeLine(file, 'enum ${en.name}');
+			openBracket(file);
+
+			for (value in en.values)
+			{
+				writeLine(file, value);
+			}
+
+			closeBracket(file);
+		}
+
+		// Unions
+		fd.unions.sort(function (a, b) {
+			return Reflect.compare(a.name, b.name);
+		});
+		for (un in fd.unions)
+		{
+			counter.unions++;
+			writeLine(file, "");
+			writeLine(file, 'typedef ${un.name} = ${un.values};');
+		}
+
+		// Classes
+		for (c in fd.classes)
+		{
+			counter.classes++;
+			// Class header
+			writeLine(file, "");
+			writeLine(file, '@:include("${c.include}")');
+			writeLine(file, '@:native("${c.native}")');
+			writeLine(file, 'extern class _${c.name}${if (c.sup != "") " extends " + c.sup + "._" + c.sup else ""}');
+			openBracket(file, false);
+
+			c.variables.sort(function (a, b) {
+				return Reflect.compare(a.name, b.name);
+			});
+			for (variable in c.variables)
+			{
+				writeLine(file, "");
+				genDoc(variable.doc, file);
+				writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+			}
+
+			//TODO: check double functions with and without const modifier
+			groupOverload(c.functions);
+			var inOverload = false;
+			for (fn in c.functions)
+			{
+				if (!inOverload)
+				{
+					writeLine(file, "");
+					genDoc(fn.doc, file);
+				}
+
+				if (fn.overload)
+				{
+					inOverload = true;
+
+					writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
+				}
+				else
+				{
+					inOverload = false;
+
+					writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+				}
+			}
+
+			// End of class
+			closeBracket(file);
+			writeLine(file, "");
+
+			// Ref class
+			genDoc(c.doc, file);
+			writeLine(file, '@:native("cpp.Reference<${c.native}>")');
+			writeLine(file, 'extern class ${c.name} extends _${c.name}');
+			openBracket(file, (c.variables_stat.length == 0 && c.functions_stat.length == 0));
+
+			c.variables_stat.sort(function (a, b) {
+				return Reflect.compare(a.name, b.name);
+			});
+			for (variable in c.variables_stat)
+			{
+				writeLine(file, "");
+				genDoc(variable.doc, file);
+				writeLine(file, '@:native("${c.native}::${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+			}
+
+			groupOverload(c.functions_stat);
+			var inOverload = false;
+			for (fn in c.functions_stat)
+			{
+				if (!inOverload)
+				{
+					writeLine(file, "");
+					genDoc(fn.doc, file);
+				}
+
+				if (fn.overload)
+				{
+					inOverload = true;
+
+					writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
+				}
+				else
+				{
+					inOverload = false;
+
+					writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+				}
+			}
+			
+			// End of ref class
+			closeBracket(file);
+		}
+		
+		// End of file
+		file.flush();
+		file.close();
 	}
 }
