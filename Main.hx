@@ -13,7 +13,7 @@ using StringTools;
 
 typedef Args = { argsName:Array<String>, argsType:Array<String>, argsValue:Array<String> };
 typedef Fn = { returnType:String, args:Args };
-typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml };
+typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml, overload:Bool };
 typedef VariableData = { name:String, native:String, initializer:String, type:String, doc:Xml };
 
 class PatchFile
@@ -708,6 +708,28 @@ class Main
 		return '$args->${fn.returnType}';
 	}
 	
+	private function groupOverload (arr:Array<FunctionData>)
+	{
+		arr.sort(function (a, b) {
+			return -1 * Reflect.compare(a.name, b.name);
+		});
+
+		var lastName = "";
+		for (fn in arr)
+		{
+			if (fn.name == lastName)
+			{
+				fn.overload = true;
+			}
+			else
+			{
+				lastName = fn.name;
+			}
+		}
+
+		arr.reverse();
+	}
+
 	private function buildClass (compounddef:Xml) : Void
 	{
 		//TODO: templated sub class, eg. List<T>::iterator
@@ -784,7 +806,7 @@ class Main
 									continue;
 								}
 								
-								var obj = { native: native, name: toHaxeName(name, true), args: args, returnType: type, doc: memberdef };
+								var obj = { native: native, name: toHaxeName(name, true), args: args, returnType: type, doc: memberdef, overload: false };
 
 								if (stat)
 								{
@@ -1004,15 +1026,29 @@ class Main
 			writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
 		}
 
-		//TODO: group together to do function overloading, also check double functions with and without const modifier
-		functions.sort(function (a, b) {
-			return -1 * Reflect.compare(a.name, b.name);
-		});
+		//TODO: check double functions with and without const modifier
+		groupOverload(functions);
+		var inOverload = false;
 		for (fn in functions)
 		{
-			writeLine(file, "");
-			genDoc(fn.doc, file);
-			writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+			if (!inOverload)
+			{
+				writeLine(file, "");
+				genDoc(fn.doc, file);
+			}
+
+			if (fn.overload)
+			{
+				inOverload = true;
+
+				writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
+			}
+			else
+			{
+				inOverload = false;
+
+				writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+			}
 		}
 
 		// End of class
@@ -1035,14 +1071,28 @@ class Main
 			writeLine(file, '@:native("$realName::${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
 		}
 		
-		functions_stat.sort(function (a, b) {
-			return Reflect.compare(a.name, b.name);
-		});
+		groupOverload(functions_stat);
+		var inOverload = false;
 		for (fn in functions_stat)
 		{
-			writeLine(file, "");
-			genDoc(fn.doc, file);
-			writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+			if (!inOverload)
+			{
+				writeLine(file, "");
+				genDoc(fn.doc, file);
+			}
+
+			if (fn.overload)
+			{
+				inOverload = true;
+
+				writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
+			}
+			else
+			{
+				inOverload = false;
+
+				writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+			}
 		}
 		
 		// End of ref class
