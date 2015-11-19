@@ -38,11 +38,16 @@ class PatchFile
 
 class Main
 {
+	private static inline var PROG_NAME = "doxygen2hxcpp";
+	private static inline var PROG_VERSION = "0.0.1";
+	private static inline var PROG_README = "https://github.com/lemdes/doxygen2hxcpp/blob/master/README.md";
+
 	public static function main ()
 	{
 		new Main();
 	}
-	
+
+	private var global : FileData;
 	private var files : Map<String, FileData>;
 	private var patches : PatchFile;
 	private var used = new Map<String, Bool>();
@@ -57,31 +62,31 @@ class Main
 	private function set_indentLevel (value:Int) : Int
 	{
 		var a = [];
-		
+
 		for (i in 0...value)
 		{
 			a.push("\t");
 		}
-		
+
 		_indent = a.join("");
-		
+
 		return indentLevel = value;
 	}
-	
+
 	public function new ()
-	{		
+	{
 		var args = Sys.args();
-		
+
 		if (args.length != 3 && args.length != 4)
 		{
 			Lib.println("neko gen.n inputPath outputPath basePackage [patchFile]");
 			return;
 		}
-		
+
 		inputPath = args[0];
 		outputPath = args[1];
 		basePack = args[2];
-		
+
 		if (args.length == 4)
 		{
 			// load patches
@@ -92,26 +97,29 @@ class Main
 		{
 			patches = new PatchFile(null);
 		}
-		
-		if (!FileSystem.exists(outputPath))		
+
+		if (!FileSystem.exists(outputPath))
 		{
 			FileSystem.createDirectory(outputPath);
 		}
-		
+
 		files = new Map<String, FileData>();
+		global = getFile("Global");
+		var c : ClassData = { name: "Global", doc: null, variables: [], functions: [], variables_stat: [], functions_stat: [], include: "", native: "", sup: "" };
+		global.classes.push(c);
 
 		var index = Xml.parse(File.getContent(Path.join([ inputPath, "index.xml" ]))).firstElement();
-		
+
 		if (!index.get("version").startsWith("1.8."))
 		{
 			Lib.println("The xml isn't version 1.8.*, may not work");
 		}
-		
+
 		var file;
 		for (compound in index.elements())
 		{
 			file = Path.join([ inputPath, compound.get("refid") + ".xml" ]);
-			
+
 			switch (compound.get("kind"))
 			{
 				case "class", "struct":
@@ -120,31 +128,33 @@ class Main
 					{
 						buildClass(compounddef);
 					}
-				
+
 				case "union":
 					var data = Xml.parse(File.getContent(file)).firstElement();
 					for (compounddef in data.elements())
 					{
 						buildUnion(compounddef);
 					}
-					
+
 				case "file":
-					//TODO: there is at least some enums in there
-					//TODO: check if they aren't also elsewhere
-					continue;
-				
+					var data = Xml.parse(File.getContent(file)).firstElement();
+					for (compounddef in data.elements())
+					{
+						buildFile(compounddef);
+					}
+
 				case "dir", "page", "group":
 					// ignore
 					//TODO: check the xmls to be sure
 					continue;
-				
+
 				default:
 					// no "interface" wxWidgets, ignore for now
 					trace("ignored (for now) compound type: " + compound.get("kind"));
 					continue;
 			}
 		}
-		
+
 		Lib.println("");
 		var i = 0;
 		for (f in files)
@@ -176,23 +186,23 @@ class Main
 		var pack = pack.copy();
 		pack.unshift(outputPath);
 		var path = Path.join(pack);
-		
-		if (!FileSystem.exists(path))		
+
+		if (!FileSystem.exists(path))
 		{
 			FileSystem.createDirectory(path);
 		}
-		
+
 		var i = classname.indexOf("<");
 		if (i > -1)
 		{
 			classname = classname.substr(0, i) + classname.substr(classname.indexOf(">")+1);
 		}
-		
+
 		pack.push(classname + ".hx");
-		path = Path.join(pack);		
-		
+		path = Path.join(pack);
+
 		nb++;
-		
+
 		if (used.exists(path))
 		{
 			// we have a problem
@@ -203,73 +213,80 @@ class Main
 		{
 			used.set(path, true);
 		}
-		
+
 		return File.write(path, false);
 	}
-	
+
 	private function genPackage (pack:Array<String>) : String
 	{
 		return " " + pack.join(".");
 	}
-	
+
 	private function toHaxeName (name:String, lower:Bool=false) : String
 	{
+		//TODO: if ALL_CAP name ignore lower flag
+
 		if (name == "")
 		{
 			return "";
 		}
-		
+
 		if (name.startsWith(basePack))
 		{
 			name = name.substr(basePack.length);
 		}
-		
+
 		return (lower ? name.substr(0,1).toLowerCase() : name.substr(0,1).toUpperCase()) + name.substr(1);
 	}
-	
+
 	private function docRemoveTag (doc:String, tag:String, encase:String, ?replace:String->String) : String
 	{
 		var pos:Int;
 		var pos2:Int;
 		var pos3:Int;
-		
+
 		var tagStart = '<$tag';
 		var tagEnd = '</$tag>';
 		var l = tagEnd.length;
-		
+
 		if (replace == null)
 		{
 			replace = function (s:String) : String { return s; };
 		}
-		
+
 		while ((pos = doc.indexOf(tagStart)) > -1)
 		{
 			pos2 = doc.indexOf(">", pos);
 			pos3 = doc.indexOf(tagEnd, pos);
-				
+
 			doc = doc.substr(0, pos) + encase + replace(doc.substr(pos2+1, pos3-pos2-1)) + encase + doc.substr(pos3+l);
 		}
-		
+
 		return doc;
 	}
-	
+
 	private function genDoc (xml:Xml, file:FileOutput) : Void
 	{
+		if (xml == null)
+		{
+			return;
+		}
+
 		var briefDoc = xml.elementsNamed("briefdescription").next();
 		var longDoc = xml.elementsNamed("detaileddescription").next();
-		
+
 		writeLine(file, "/**");
-		
+
 		for (element in briefDoc.elements())
 		{
 			var para = element.toString();
 			para = para.substr(para.indexOf(">") + 1);
 			para = para.substr(0, para.lastIndexOf("<"));
-			
+
 			para = docRemoveTag(para, "ref", "`", function (s) return toHaxeName(s));
 			para = docRemoveTag(para, "computeroutput", "```");
 			para = docRemoveTag(para, "emphasis", "*");
-			
+
 			writeLine(file, ' * ${para.trim()}');
 		}
 		//TODO: hidden for now to ease check of generated files
@@ -278,25 +295,25 @@ class Main
 		for (element in longDoc.elements())
 		{
 			writeLine(file, " * ");
-			
+
 			var para = element.toString();
 			para = para.substr(para.indexOf(">") + 1);
 			para = para.substr(0, para.lastIndexOf("<"));
-			
+
 			para = docRemoveTag(para, "ref", "`");
 			para = docRemoveTag(para, "computeroutput", "```");
 			para = docRemoveTag(para, "emphasis", "*");
-			
+
 			writeLine(file, ' * ${para.trim()}');
 		}
 		*/
 		writeLine(file, " */");
 	}
-	
+
 	private function getXmlContent (xml:Xml, nodename:String) : String
 	{
 		var element = xml.elementsNamed(nodename).next();
-		
+
 		if (element == null)
 		{
 			return "";
@@ -306,12 +323,12 @@ class Main
 			return element.firstChild().nodeValue;
 		}
 	}
-	
+
 	private function getType(memberDef:Xml) : String
 	{
 		var type = "";
 		var e = memberDef.elementsNamed("type").next();
-		
+
 		if (e != null)
 		{
 			var it = e.iterator();
@@ -319,7 +336,7 @@ class Main
 			while (it.hasNext())
 			{
 				n = it.next();
-				
+
 				if (n.nodeType == Xml.PCData)
 				{
 					type += n.nodeValue;
@@ -328,10 +345,10 @@ class Main
 				{
 					type += n.firstChild().nodeValue;
 				}
-				
+
 			}
 		}
-		
+
 		if (type.startsWith("const "))
 		{
 			return type.substr(6);
@@ -341,7 +358,7 @@ class Main
 			return type;
 		}
 	}
-	
+
 	private function toHaxeType (cppType:String) : String
 	{
 		if (cppType == "void *")
@@ -349,17 +366,17 @@ class Main
 			// any pointer
 			return "Dynamic";
 		}
-		
+
 		if (cppType.indexOf("(") > -1)
 		{
-			
+
 			// returnType(*|T::*)(Type a, Type b)
 			var tmp = cppType.split("(");
 			var returnType = toHaxeType(tmp[0]);
-			
+
 			var paramString = tmp[tmp.length-1];
 			var parameters = paramString.substr(0,paramString.length-1).split(",");
-			
+
 			var type = "";
 			for (param in parameters)
 			{
@@ -368,60 +385,60 @@ class Main
 			type += returnType;
 			return type;
 		}
-		
+
 		if (cppType.indexOf("::") > -1)
 		{
 			var tmp = cppType.split("::");
 			return '${toHaxeType(tmp[0])}.${toHaxeType(tmp[1])}';
 		}
-		
+
 		var pointer = cppType.endsWith(" *");
 		var arrayarray = cppType.endsWith(" **");
-				
+
 		if (pointer)
 		{
 			cppType = cppType.substr(0, cppType.length-2);
 		}
-		
+
 		if (arrayarray)
 		{
 			cppType = cppType.substr(0, cppType.length-3);
 		}
-		
-		
+
+
 		if (cppType.endsWith(" &"))
 		{
 			//TODO: do something? but they already are cpp.Ref so maybe not
 			cppType = cppType.substr(0, cppType.length-2);
-		}	
-		
+		}
+
 		var type = switch (cppType)
 		{
 			case "...":
 				"haxe.extern.Rest<Dynamic>"; //TODO: better than dynamic?
-			
+
 			case "bool":
 				"Bool";
-				
+
 			case "char", "int":
 				"Int";
-				
+
 			case "", "void":
 				"Void";
-				
+
 			case "unsigned char", "unsigned", "size_t", "UInt":
 				"UInt";
-				
+
 			case "float", "double", "long":
 				"Float";
-				
+
 			case "std::string", "std::wstring":
 				"String";
-				
+
 			default:
 				toHaxeName(cppType);
 		};
-		
+
 		if (pointer)
 		{
 			return 'cpp.Pointer<$type>';
@@ -435,50 +452,50 @@ class Main
 			return type;
 		}
 	}
-	
+
 	private function writeLine (file:FileOutput, line:String, lineEnd=true) : Void
 	{
 		file.writeString('$_indent$line${if (lineEnd) "\n" else ""}');
 	}
-	
+
 	private function openBracket (file, lineEnd=true) : Void
 	{
 		writeLine(file, "{", lineEnd);
 		indentLevel++;
 	}
-	
+
 	private function closeBracket (file) : Void
 	{
 		indentLevel--;
 		writeLine(file, "}");
 	}
-	
+
 	private function safeName (name:String) : String
 	{
 		return switch (name)
 		{
 			case "function":
 				"fn";
-			
+
 			case "operator()":
 				"operator_fn";
-				
+
 			case "break":
 				"break_";
-			
+
 			//TODO: make a case for each operator
 			//TODO: add all haxe keywords
-			
+
 			default:
 				name.replace("=", "_eq").replace("!", "_neq").replace("[]", "_arraccess").replace("+=", "_eqadd").replace("+", "_add").replace("<<", "_in");
 		}
 	}
-	
+
 	private function getDefaultValue (param:Xml) : String
 	{
 		var defval = "";
 		var e = param.elementsNamed("defval").next();
-		
+
 		if (e != null)
 		{
 			var it = e.iterator();
@@ -486,7 +503,7 @@ class Main
 			while (it.hasNext())
 			{
 				n = it.next();
-				
+
 				if (n.nodeType == Xml.PCData)
 				{
 					defval += n.nodeValue;
@@ -495,12 +512,12 @@ class Main
 				{
 					defval += toHaxeType(n.firstChild().nodeValue);
 				}
-				
+
 			}
 		}
 		return defval;
 	}
-	
+
 	private function toHaxeArgs (memberdef:Xml) : Args
 	{
 		var sep = function (s:String) : String
@@ -515,11 +532,11 @@ class Main
 				return toHaxeType(s);
 			}
 		};
-		
+
 		var argsName = [];
 		var argsValue = [];
 		var argsType = [];
-		
+
 		var it = memberdef.elementsNamed("param");
 		while (it.hasNext())
 		{
@@ -550,8 +567,8 @@ class Main
 					}
 				}
 			}
-			
-			argsType.push(type);			
+
+			argsType.push(type);
 			if (type == "haxe.extern.Rest<Dynamic>")
 			{
 				argsName.push("otherArgs");
@@ -563,12 +580,12 @@ class Main
 			argsValue.push(value);
 			//TODO: default value in wxList value_type() = T*
 		}
-		
+
 		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
 	}
-	
+
 	private function argstringToArgs (argstring:String) : Args
-	{	
+	{
 		var sep = function (s:String) : String
 		{
 			if (s.indexOf("::") > -1 && !s.startsWith("std::"))
@@ -581,39 +598,39 @@ class Main
 				return toHaxeType(s);
 			}
 		};
-		
+
 		var argsName = [];
 		var argsValue = [];
 		var argsType = [];
-		
+
 		if (argstring.endsWith("=0"))
 		{
 			trace(argstring);
 			argstring = argstring.substr(0, argstring.length-2);
 		}
-		
+
 		if (argstring.endsWith(" const "))
 		{
 			trace(argstring);
 			argstring = argstring.substr(0, argstring.length-7);
 		}
-		
+
 		if (argstring == "()")
 		{
 			return { argsName: [], argsType: [], argsValue: [] };
 		}
-		
+
 		var args = argstring.substr(1, argstring.length-2).split(','); //TODO: not reliable, redo function
 		var haxeArgs = [];
-		
+
 		for (arg in args)
-		{			
+		{
 			var type = arg.trim().split(" ");
-			
+
 			var name = type.pop();
 			var pointerArg = false;
 			var defaultValue = "";
-			
+
 			if (name.charAt(0) == '*') //TODO: **name (double *)
 			{
 				name = name.substr(1);
@@ -623,13 +640,13 @@ class Main
 			{
 				//TODO: probably needs something, but they already are cpp.Ref so maybe not
 				name = name.substr(1);
-			}			
+			}
 			if (name.indexOf("=") > -1)
 			{
 				var tmp = name.split("=");
 				name = tmp[0];
 				defaultValue = sep(tmp[1]);
-				
+
 				var f = defaultValue.charCodeAt(0);
 				if (f >= "0".code && f <= "9".code) // number
 				{
@@ -640,16 +657,16 @@ class Main
 					}
 				}
 			}
-			
+
 			if (type[0] == "const")
 			{
 				type.shift();
 			}
-			
+
 			if (type.length == 2 && type[0] == "unsigned")
 			{
 				type.pop();
-				
+
 				if (type[1] == "int" || type[1] == "char")
 				{
 					type[0] = "UInt";
@@ -659,7 +676,7 @@ class Main
 				//~ //	type[0] = "long";
 				//~ //}
 			}
-			
+
 			var t = if (type.length == 0)
 			{
 				name = "_";
@@ -669,15 +686,15 @@ class Main
 			{
 				sep(type[0]);
 			}
-			
+
 			if (pointerArg)
 			{
 				t = 'cpp.Pointer<$t>';
 			}
-			
+
 			//TODO: templated arg type; see Array.sort
 			//TODO: List.resize default value " = Value_type()"
-			
+
 			var raw = name.split("[");
 			name = raw[0];
 			var array_number = raw.length -1;
@@ -687,59 +704,59 @@ class Main
 				array_number--;
 			}
 			name = safeName(name);
-			
+
 			argsName.push(name);
 			argsType.push(t);
 			argsValue.push(defaultValue);
 		}
-		
+
 		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
 	}
-	
+
 	private function toArgString (args:Args) : String
 	{
 		var a = [];
-		
+
 		for (i in 0...args.argsName.length)
 		{
 			a.push('${args.argsName[i]}:${args.argsType[i]}${if (args.argsValue[i] != "") " = " + args.argsValue[i] else ""}');
 		}
-		
+
 		return '(${a.join(", ")})';
 	}
-	
+
 	private function parseFunctionSign (sign:String, name:String) : Fn
 	{
 		var i = sign.indexOf("(");
 		var returnType = sign.substr(0, i);
-		sign = sign.substr(i+1);		
+		sign = sign.substr(i+1);
 		var t = sign.split(")(");
-		
+
 		if (t.length != 2)
 		{
 			return null;
 		}
-		
+
 		if (t[0].startsWith("* "))
 		{
 			t[0] = t[0].substr(2);
 		}
-		
+
 		if (t[0] != name)
 		{
 			return null;
 		}
-		
+
 		return { returnType: toHaxeType(returnType), args: argstringToArgs('(${t[1]}') };
 	}
-	
+
 	private function fnType (fn:Fn) : String
 	{
 		var args = if (fn.args.argsType.length > 0) fn.args.argsType.join("->") else "Void";
-		
+
 		return '$args->${fn.returnType}';
 	}
-	
+
 	private function groupOverload (arr:Array<FunctionData>)
 	{
 		arr.sort(function (a, b) {
@@ -762,6 +779,263 @@ class Main
 		arr.reverse();
 	}
 
+	private function buildGlobal (memberdef:Xml, realName:String) : Void
+	{
+		switch (memberdef.get("kind"))
+		{
+			case "function":
+				var obj = buildFunction(memberdef, "Global");
+
+				if (obj != null)
+				{
+					global.classes[0].functions_stat.push(obj);
+				}
+
+			case "typedef":
+				var obj = buildTypedef(memberdef, "Global");
+
+				if (obj != null)
+				{
+					global.typedefs.push(obj);
+				}
+
+			case "variable":
+				var obj = buildVariable(memberdef, "Global");
+
+				if (obj != null)
+				{
+					global.classes[0].variables_stat.push(obj);
+				}
+
+			default:
+				trace("ignored (for now) GLOBAL memberdef type: " + memberdef.get("kind") + " in " + realName);
+		}
+	}
+
+	private function buildFile (compounddef:Xml) : Void
+	{
+		var realName = getXmlContent(compounddef, "compoundname");
+
+		for (section in compounddef.elementsNamed("sectiondef"))
+		{
+			switch (section.get("kind"))
+			{
+				case "enum", "user-defined", "var", "func", "typedef":
+					for (memberdef in section.elementsNamed("memberdef"))
+					{
+						if (memberdef.get("prot") != "public")
+						{
+							continue; // not in the API
+						}
+
+						switch (memberdef.get("kind"))
+						{
+							case "enum":
+								buildEnum(memberdef, realName);
+
+							case "function", "typedef", "variable":
+								buildGlobal(memberdef, realName);
+								continue;
+
+							case "define":
+								// ignore
+								continue;
+
+							default:
+								trace("ignored (for now) memberdef type: " + memberdef.get("kind") + " in " + realName);
+						}
+					}
+
+				case "define":
+					// ignore
+					continue;
+
+				default:
+					trace("ignored (for now) sectiondef type: " + section.get("kind"));
+			}
+		}
+	}
+
+	private function buildEnum (memberdef:Xml, realName:String) : Void
+	{
+		var stat = memberdef.get("static") == "yes";
+		var name = getXmlContent(memberdef, "name");
+		var nameu = '${name}_';
+
+		var values = [];
+		var vname;
+		var vinit;
+		var nbInit = 0;
+		for (enumvalue in memberdef.elementsNamed("enumvalue"))
+		{
+			vname = getXmlContent(enumvalue, "name");
+			vinit = getXmlContent(enumvalue, "initializer");
+
+			if (vinit != "")
+			{
+				nbInit++;
+			}
+
+			if (vname.startsWith(nameu))
+			{
+				vname = vname.substr(nameu.length);
+			}
+
+			values.push('$vname${if (vinit != "") " " + vinit else ""};');
+		}
+
+		if (nbInit > 0 && nbInit != values.length)
+		{
+			//TODO: do
+			Lib.println('Enum error in "$realName": named "$name" has mix of initializer presence/absence');
+			return;
+		}
+
+		if (name.charCodeAt(0) == "@".code)
+		{
+			if (values.length == 1)
+			{
+				//TODO: explode into Global
+				Lib.println('Enum error in "$realName": nameless ($name) with only one value but no patch');
+				return;
+			}
+
+			// Find longuest prefix in all value
+			var prefix = values[0];
+			var i;
+			var l;
+			for (value in values)
+			{
+				if (value.startsWith(prefix))
+				{
+					continue;
+				}
+
+				l = (prefix.length < value.length) ? prefix.length : value.length;
+				i = 0;
+
+				for (j in 0...l+1)
+				{
+					if (value.charAt(i) != prefix.charAt(i))
+					{
+						break;
+					}
+				}
+
+				if (i == 0) // no prefix
+				{
+					prefix = "";
+					break;
+				}
+
+				prefix = prefix.substr(0, i);
+			}
+
+			if (prefix == "")
+			{
+				//TODO: explode into Global
+				Lib.println('Enum error in "$realName": nameless ($name) with no common prefix and no patch');
+				return;
+			}
+
+			for (i in 0...values.length)
+			{
+				values[i] = values[i].substr(prefix.length); //TODO: also remove 'wx' (basePack)
+			}
+
+			if (prefix.endsWith("_"))
+			{
+				prefix = prefix.substr(0, prefix.length-1);
+			}
+
+			//TODO: Clean name
+			name = prefix;
+		}
+
+		//TODO: if no need to find prefix still remove enum name from values' string
+		//TODO: need to update arg default values if enum values are modified
+
+		var e:EnumData = { name: toHaxeName(name), values: values, doc: memberdef };
+		var f = getFile(e.name);
+		f.enums.push(e);
+	}
+
+	private function buildFunction (memberdef:Xml, realName:String) : FunctionData
+	{
+		var stat = memberdef.get("static") == "yes";
+		var name = getXmlContent(memberdef, "name"); //TODO: if name is create will bug with the static create function of the constructor
+		var isConstructor = name == realName;
+		var isDestructor = name.startsWith("~") && name.substr(1) == realName; //TODO: doesn't work on templated classes
+		var args = toHaxeArgs(memberdef);
+		var type = toHaxeType(getType(memberdef));
+		var native = (if (stat) '$realName::' else "") + name;
+
+		//TODO: generic function <T>
+
+		if (name.startsWith("operator"))
+		{
+			//TODO: abstract?
+			return null;
+		}
+
+		name = name.replace(" ", "_");
+
+		if (isConstructor)
+		{
+			stat = true;
+			name = "create";
+			type = toHaxeName(realName);
+			native = 'new $realName';
+		}
+
+		if (isDestructor)
+		{
+			//TODO: test if presence necessary
+			//TODO: Array has multiple destructors with a name different from the class
+			return null;
+		}
+
+		return { native: native, name: toHaxeName(name, true), args: args, returnType: type, doc: memberdef, overload: false };
+	}
+
+	private function buildTypedef (memberdef:Xml, realName:String) : TypedefData
+	{
+		// syntax: typedef [const] type realName::name;
+
+		var def = getXmlContent(memberdef, "definition").substr(8); //.split(" ");
+		var name = getXmlContent(memberdef, "name");
+		var longName = '$realName::$name'; //TODO: templated realName
+
+		if (!def.endsWith(longName))
+		{
+			var sign = parseFunctionSign(def, longName);
+
+			if (sign == null)
+			{
+				//TODO: what is it?
+				Lib.println('Typedef error in "$realName": name "$name" not found in $def');
+				return null;
+			}
+
+			def = fnType(sign);
+		}
+		else
+		{
+			def = def.substr(0, def.length - longName.length);
+		}
+
+		return { name: name, value: def, doc: memberdef };
+	}
+
+	private function buildVariable (memberdef:Xml, realName:String) : VariableData
+	{
+		var name = getXmlContent(memberdef, "name");
+		var initializer = getXmlContent(memberdef, "initializer");
+		var type = toHaxeType(getType(memberdef));
+
+		return { name: toHaxeName(name, true), native: name, initializer: initializer, type: type, doc: memberdef };
+	}
+
 	private function buildClass (compounddef:Xml) : Void
 	{
 		//TODO: templated sub class, eg. List<T>::iterator
@@ -782,13 +1056,12 @@ class Main
 		var sup = toHaxeName(getXmlContent(compounddef, "basecompoundref"));
 		var includes = getXmlContent(compounddef, "includes").split("/");
 		var include = includes.splice(includes.length-2, includes.length).join("/");
-		
+
 		var functions_stat = new Array<FunctionData>();
 		var functions = new Array<FunctionData>();
 		var variables_stat = new Array<VariableData>();
 		var variables = new Array<VariableData>();
 		var typedefs = new Array<TypedefData>();
-		var enums = new Array<EnumData>();
 
 		for (section in compounddef.elementsNamed("sectiondef"))
 		{
@@ -801,46 +1074,17 @@ class Main
 						{
 							continue; // not in the API
 						}
-						
+
 						switch (memberdef.get("kind"))
 						{
-							case "function":								
-								var stat = memberdef.get("static") == "yes";
-								var name = getXmlContent(memberdef, "name"); //TODO: if name is create will bug with the static create function of the constructor
-								var isConstructor = name == realName;
-								var isDestructor = name.startsWith("~") && name.substr(1) == realName; //TODO: doesn't work on templated classes
-								var args = toHaxeArgs(memberdef);
-								var type = toHaxeType(getType(memberdef));
-								var native = (if (stat) '$realName::' else "") + name;
-								
-								//TODO: generic function <T>
-								
-								if (name.startsWith("operator"))
-								{
-									//TODO: abstract?
-									continue;
-								}
-																
-								name = name.replace(" ", "_");								
-								
-								if (isConstructor)
-								{
-									stat = true;
-									name = "create";									
-									type = haxeName;
-									native = 'new $realName';									
-								}
-								
-								if (isDestructor)
-								{
-									//TODO: test if presence necessary
-									//TODO: Array has multiple destructors with a name different from the class
-									continue;
-								}
-								
-								var obj = { native: native, name: toHaxeName(name, true), args: args, returnType: type, doc: memberdef, overload: false };
+							case "function":
+								var obj = buildFunction(memberdef, realName);
 
-								if (stat)
+								if (obj == null)
+								{
+									continue;
+								}
+								else if (memberdef.get("static") == "yes")
 								{
 									functions_stat.push(obj);
 								}
@@ -848,142 +1092,30 @@ class Main
 								{
 									functions.push(obj);
 								}
-							
+
 							case "typedef":
-								// syntax: typedef [const] type realName::name;
-								
-								var def = getXmlContent(memberdef, "definition").substr(8); //.split(" ");
-								var name = getXmlContent(memberdef, "name");
-								var longName = '$realName::$name'; //TODO: templated realName
-								
-								if (!def.endsWith(longName))
+								var obj = buildTypedef(memberdef, realName);
+
+								if (obj == null)
 								{
-									var sign = parseFunctionSign(def, longName);
-									
-									if (sign == null)
-									{
-										//TODO: what is it?									
-										Lib.println('Typedef error in "$realName": name "$name" not found in $def');
-										continue;
-									}
-									
-									def = fnType(sign);
+									continue;
 								}
 								else
 								{
-									def = def.substr(0, def.length - longName.length);
+									typedefs.push(obj);
 								}
-								
-								typedefs.push({ name: name, value: def, doc: memberdef });
-								
-							case "enum":							
-								var stat = memberdef.get("static") == "yes";
-								var name = getXmlContent(memberdef, "name");
-								var nameu = '${name}_';
-								
-								var values = [];
-								var vname;
-								var vinit;
-								var nbInit = 0;
-								for (enumvalue in memberdef.elementsNamed("enumvalue"))
+
+							case "enum":
+								buildEnum(memberdef, realName);
+
+							case "variable":
+								var obj = buildVariable(memberdef, realName);
+
+								if (obj == null)
 								{
-									vname = getXmlContent(enumvalue, "name");
-									vinit = getXmlContent(enumvalue, "initializer");
-									
-									if (vinit != "")
-									{
-										nbInit++;
-									}
-									
-									if (vname.startsWith(nameu))
-									{
-										vname = vname.substr(nameu.length);
-									}
-									
-									values.push('$vname${if (vinit != "") " " + vinit else ""};');
-								}
-								
-								if (nbInit > 0 && nbInit != values.length)
-								{
-									//TODO: what to do?							
-									Lib.println('Enum error in "$realName": named "$name" has mix of initializer presence/absence');
 									continue;
 								}
-								
-								if (name.charCodeAt(0) == "@".code)
-								{
-									if (values.length == 1)
-									{
-										//TODO: ask for patch
-										Lib.println('Enum error in "$realName": nameless ($name) with only one value but no patch');
-										continue;
-									}
-									
-									// Find longuest prefix in all value
-									var prefix = values[0];
-									var i;
-									var l;
-									for (value in values)
-									{										
-										if (value.startsWith(prefix))
-										{
-											continue;
-										}
-										
-										l = (prefix.length < value.length) ? prefix.length : value.length;
-										i = 0;
-										
-										for (j in 0...l+1)
-										{											
-											if (value.charAt(i) != prefix.charAt(i))
-											{
-												break;
-											}
-										}											
-										
-										if (i == 0) // no prefix
-										{
-											prefix = "";
-											break;
-										}
-										
-										prefix = prefix.substr(0, i);
-									}
-									
-									if (prefix == "")
-									{
-										//TODO: ask for patch
-										Lib.println('Enum error in "$realName": nameless ($name) with no common prefix and no patch');
-										continue;
-									}
-									
-									for (i in 0...values.length)
-									{
-										values[i] = values[i].substr(prefix.length); //TODO: also remove 'wx' (basePack)
-									}
-									
-									if (prefix.endsWith("_"))
-									{
-										prefix = prefix.substr(0, prefix.length-1);
-									}
-									
-									//TODO: Clean name
-									name = prefix;
-								}
-								
-								//TODO: if no need to find prefix still remove enum name from values' string
-								//TODO: need to update arg default values if enum values are modified
-
-								enums.push({ name: toHaxeName(name), values: values, doc: memberdef });
-								
-							case "variable":
-								var name = getXmlContent(memberdef, "name");
-								var initializer = getXmlContent(memberdef, "initializer");
-								var type = toHaxeType(getType(memberdef));
-								
-								var obj = { name: toHaxeName(name, true), native: name, initializer: initializer, type: type, doc: memberdef };
-
-								if (memberdef.get("static") == "yes")
+								else if (memberdef.get("static") == "yes")
 								{
 									variables_stat.push(obj);
 								}
@@ -991,37 +1123,30 @@ class Main
 								{
 									variables.push(obj);
 								}
-															
+
 							default:
 								trace("ignored (for now) memberdef type: " + memberdef.get("kind") + " in " + realName);
 						}
 					}
-				
+
 				case "protected-func", "protected-static-func", "protected-attrib", "protected-static-attrib", "protected-type", "private-static-attrib", "private-func", "private-attrib":
 					// ignore, protected and private are not part of the API
 					continue;
-					
+
 				case "typedef", "friend":
 					// ignore //TODO: igore typedef?!
 					continue;
-				
+
 				default:
 					trace("ignored (for now) sectiondef type: " + section.get("kind"));
-					continue;
 			}
 		}
-		
+
 		var c : ClassData = { name: haxeName, doc: compounddef, variables: variables, functions: functions, variables_stat: variables_stat, functions_stat: functions_stat, include: include, native: realName, sup: sup };
 
 		var f = getFile(fileName);
 		f.classes.push(c);
 		f.typedefs = f.typedefs.concat(typedefs);
-
-		for (e in enums)
-		{
-			var f = getFile(e.name);
-			f.enums.push(e);
-		}
 	}
 
 	private function getEithers (compounddef:Xml) : String
@@ -1085,6 +1210,9 @@ class Main
 
 		// File header
 		writeLine(file, 'package${genPackage(pack)};');
+		writeLine(file, "");
+		writeLine(file, '// This file was generated by $PROG_NAME version $PROG_VERSION, DO NOT EDIT');
+		writeLine(file, '// See $PROG_README about patching the generation');
 
 		// Typedefs
 		fd.typedefs.sort(function (a, b) {
@@ -1131,56 +1259,76 @@ class Main
 		for (c in fd.classes)
 		{
 			counter.classes++;
-			// Class header
-			writeLine(file, "");
-			writeLine(file, '@:include("${c.include}")');
-			writeLine(file, '@:native("${c.native}")');
-			writeLine(file, 'extern class _${c.name}${if (c.sup != "") " extends " + c.sup + "._" + c.sup else ""}');
-			openBracket(file, false);
 
-			c.variables.sort(function (a, b) {
-				return Reflect.compare(a.name, b.name);
-			});
-			for (variable in c.variables)
+			// Class header
+			if (c.name != "Global")
 			{
 				writeLine(file, "");
-				genDoc(variable.doc, file);
-				writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
-			}
+				if (c.include != "")
+				{
+					writeLine(file, '@:include("${c.include}")');
+				}
+				if (c.native != "")
+				{
+					writeLine(file, '@:native("${c.native}")');
+				}
+				writeLine(file, 'extern class _${c.name}${if (c.sup != "") " extends " + c.sup + "._" + c.sup else ""}');
+				openBracket(file, false);
 
-			//TODO: check double functions with and without const modifier
-			groupOverload(c.functions);
-			var inOverload = false;
-			for (fn in c.functions)
-			{
-				if (!inOverload)
+				c.variables.sort(function (a, b) {
+					return Reflect.compare(a.name, b.name);
+				});
+				for (variable in c.variables)
 				{
 					writeLine(file, "");
-					genDoc(fn.doc, file);
+					genDoc(variable.doc, file);
+					writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
 				}
 
-				if (fn.overload)
+				//TODO: check double functions with and without const modifier
+				groupOverload(c.functions);
+				var inOverload = false;
+				for (fn in c.functions)
 				{
-					inOverload = true;
+					if (!inOverload)
+					{
+						writeLine(file, "");
+						genDoc(fn.doc, file);
+					}
 
-					writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
-				}
-				else
-				{
-					inOverload = false;
+					if (fn.overload)
+					{
+						inOverload = true;
 
-					writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+						writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
+					}
+					else
+					{
+						inOverload = false;
+
+						writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+					}
 				}
+
+				// End of class
+				closeBracket(file);
 			}
 
-			// End of class
-			closeBracket(file);
-			writeLine(file, "");
-
 			// Ref class
+			writeLine(file, "");
 			genDoc(c.doc, file);
-			writeLine(file, '@:native("cpp.Reference<${c.native}>")');
-			writeLine(file, 'extern class ${c.name} extends _${c.name}');
+			if (c.native != "")
+			{
+				writeLine(file, '@:native("cpp.Reference<${c.native}>")');
+			}
+			if (c.name == "Global")
+			{
+				writeLine(file, 'extern class ${c.name}');
+			}
+			else
+			{
+				writeLine(file, 'extern class ${c.name} extends _${c.name}');
+			}
 			openBracket(file, (c.variables_stat.length == 0 && c.functions_stat.length == 0));
 
 			c.variables_stat.sort(function (a, b) {
@@ -1190,7 +1338,7 @@ class Main
 			{
 				writeLine(file, "");
 				genDoc(variable.doc, file);
-				writeLine(file, '@:native("${c.native}::${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+				writeLine(file, '@:native("${c.native}::${variable.native}") public static var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
 			}
 
 			groupOverload(c.functions_stat);
@@ -1216,11 +1364,11 @@ class Main
 					writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
 				}
 			}
-			
+
 			// End of ref class
 			closeBracket(file);
 		}
-		
+
 		// End of file
 		file.flush();
 		file.close();
