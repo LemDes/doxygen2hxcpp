@@ -4,6 +4,10 @@
 		<method class="" name="" args="" />
 	</patch>
 	
+	<ignore>
+		<item type="class" name="wxScopedPtr"/>
+	</ignore>
+	
 	<add>
 		<!-- Missing: -->
 		<typedef name="wxObjectEventFunction" is="wxEventFunction" />

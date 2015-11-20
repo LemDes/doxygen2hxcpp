@@ -20,9 +20,12 @@ typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat
 typedef EnumData = { name:String, values:Array<String>, doc:Xml };
 typedef UnionData = { name:String, values:String, doc:Xml };
 typedef FileData = { pack:Array<String>, name:String, typedefs:Array<TypedefData>, classes:Array<ClassData>, enums:Array<EnumData>, unions:Array<UnionData> };
+typedef RawTypedef = { name:String, value:String };
 
 class PatchFile
 {
+	var ignored = new Array<String>();
+	public var typedefs = new Array<RawTypedef>();
 	public function new (?xml:Xml)
 	{
 		if (xml == null)
@@ -32,8 +35,27 @@ class PatchFile
 		else
 		{
 			// read patches
+			
+			// Get ignored file
+			var root = xml.elementsNamed("root").next();
+			var it = root.elementsNamed("ignore").next().elementsNamed("item");
+			while (it.hasNext())
+			{
+				var e = it.next();
+				ignored.push(e.get("name"));
+			}
+			
+			// Get unspecified typedef
+			it = root.elementsNamed("add").next().elementsNamed("typedef");
+			while (it.hasNext())
+			{
+				var e = it.next();
+				typedefs.push({ name: e.get("name"), value: e.get("is")});
+			}
 		}
 	}
+	
+	public inline function ignores (name:String) : Bool { return ignored.indexOf(name)!=-1;}
 }
 
 class Main
@@ -107,6 +129,13 @@ class Main
 		global = getFile("Global");
 		var c : ClassData = { name: "Global", doc: null, variables: [], functions: [], variables_stat: [], functions_stat: [], include: "", native: "", sup: "" };
 		global.classes.push(c);
+		
+		for (td in patches.typedefs)
+			{
+				var name = toHaxeName(td.name);
+				var value = toHaxeName(td.value);
+				getFile(value).typedefs.push({name:name, value:value, doc:null});
+			}
 
 		var index = Xml.parse(File.getContent(Path.join([ inputPath, "index.xml" ]))).firstElement();
 
@@ -118,6 +147,13 @@ class Main
 		var file;
 		for (compound in index.elements())
 		{
+			var compoundName = compound.firstChild().firstChild().nodeValue;
+			if (patches.ignores(compoundName))
+			{
+				Lib.println("Ignoring "+compoundName + " as specified by the patch file.");
+				continue;
+			}
+			
 			file = Path.join([ inputPath, compound.get("refid") + ".xml" ]);
 
 			switch (compound.get("kind"))
