@@ -5,7 +5,9 @@
 	</ignore>
 
 	<add>
-		<!--<typedef name="wxObjectEventFunction" is="wxEventFunction" />-->
+		<!--<typedef name="ObjectEventFunction" is="EventFunction" />-->
+		<typedef name="ObjectEventFunction" is="Dynamic" />
+		<typedef name="EventTable" is="Dynamic" />
 		<typedef name="ObjectConstructorFn" is="Void->Object" />
 	</add>
 </root>

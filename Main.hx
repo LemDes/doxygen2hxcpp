@@ -14,7 +14,7 @@ using StringTools;
 typedef Args = { argsName:Array<String>, argsType:Array<String>, argsValue:Array<String> };
 typedef Fn = { returnType:String, args:Args };
 typedef TypedefData = { name:String, value: String, doc:Xml };
-typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml, overload:Bool };
+typedef FunctionData = { native:String, args:Args, name:String, returnType:String, templatedParams:Array<String>, doc:Xml, overload:Bool };
 typedef VariableData = { name:String, native:String, initializer:String, type:String, doc:Xml };
 typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat:Array<VariableData>, functions:Array<FunctionData>, functions_stat:Array<FunctionData>, doc:Xml, sup:String, native:String, include:String };
 typedef EnumData = { name:String, values:Array<{ name:String, value:String}>, doc:Xml };
@@ -575,6 +575,23 @@ class Main
 		}
 		return defval;
 	}
+	
+	private function toHaxeTemplateParams (memberdef:Xml) : Array<String>
+	{
+		var templates:Array<String> = [];
+		
+		for (templatelist in memberdef.elementsNamed("templateparamlist"))
+		{
+			for (param in templatelist.elementsNamed("param"))
+			{
+				var typeSplit = getXmlContent(param,"type").split(" ");
+				if (typeSplit.length == 2)
+					templates.push(typeSplit[1]);				
+			}
+		}
+		
+		return templates;
+	}
 
 	private function toHaxeArgs (memberdef:Xml) : Args
 	{
@@ -863,7 +880,7 @@ class Main
 				for (i in 1...(n-f+1))
 				{
 					var a = { argsValue: fn.args.argsValue.slice(0, n-i), argsType: fn.args.argsType.slice(0, n-i), argsName: fn.args.argsName.slice(0, n-i) };
-					var c = { returnType: fn.returnType, overload: true, native: "", name: fn.name, doc: null, args: a };
+					var c = { returnType: fn.returnType, overload: true, native: "", name: fn.name, templatedParams: fn.templatedParams, doc: null, args: a };
 					// fn (a:Int, b:Int = 2, c:Int = 3) => @ov(a:Int) + @ov(a:Int, b:Int) + fn(a:Int, b:Int, c:Int)
 					res.push(c);
 				}
@@ -1133,6 +1150,7 @@ class Main
 		var name = getXmlContent(memberdef, "name"); //TODO: if name is create will bug with the static create function of the constructor
 		var isConstructor = name == realName;
 		var isDestructor = name.startsWith("~") && name.substr(1) == realName; //TODO: doesn't work on templated classes
+		var templatedParams = toHaxeTemplateParams(memberdef);
 		var args = toHaxeArgs(memberdef);
 		var type = toHaxeType(getType(memberdef));
 		var native = (if (stat) '$realName::' else "") + name;
@@ -1165,7 +1183,7 @@ class Main
 			return null;
 		}
 
-		return { native: native, name: name, args: args, returnType: type, doc: memberdef, overload: false };
+		return { native: native, name: name, args: args, returnType: type, templatedParams: templatedParams, doc: memberdef, overload: false };
 	}
 
 	private function buildTypedef (memberdef:Xml, realName:String) : TypedefData
@@ -1175,7 +1193,7 @@ class Main
 		var def = getXmlContent(memberdef, "definition").substr(8); //.split(" ");
 		var name = getXmlContent(memberdef, "name");
 		var longName = '$realName::$name'; //TODO: templated realName
-
+	
 		if (!def.endsWith(name))
 		{
 			var sign = parseFunctionSign(def, name, realName);
@@ -1191,7 +1209,8 @@ class Main
 		}
 		else
 		{
-			def = def.substr(0, def.length - longName.length);
+			def = toHaxeType(getType(memberdef));
+			//~ def = def.substr(0, def.length - longName.length);
 		}
 
 		return { name: toHaxeName(name), value: def, doc: memberdef };
@@ -1465,17 +1484,18 @@ class Main
 						genDoc(fn.doc, file);
 					}
 
+					var templatedParams = (fn.templatedParams.length > 0) ? "<"+fn.templatedParams.join(", ")+"> " : "";
 					if (fn.overload)
 					{
 						inOverload = true;
 
-						writeLine(file, '@:overload(function ${toArgString(fn.args)} : ${fn.returnType} {})');
+						writeLine(file, '@:overload(function ${templatedParams}${toArgString(fn.args)} : ${fn.returnType} {})');
 					}
 					else
 					{
 						inOverload = false;
-
-						writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+						
+						writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${templatedParams}${toArgString(fn.args)} : ${fn.returnType};');
 					}
 				}
 
@@ -1519,17 +1539,18 @@ class Main
 					genDoc(fn.doc, file);
 				}
 
+				var templatedParams = (fn.templatedParams.length > 0) ? "<"+fn.templatedParams.join(", ")+"> " : "";
 				if (fn.overload)
 				{
 					inOverload = true;
 
-					writeLine(file, '@:overload(function ${toArgString(fn.args)} : ${fn.returnType} {})');
+					writeLine(file, '@:overload(function ${templatedParams}${toArgString(fn.args)} : ${fn.returnType} {})');
 				}
 				else
 				{
 					inOverload = false;
 
-					writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType};');
+					writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${templatedParams}${toArgString(fn.args)} : ${fn.returnType};');
 				}
 			}
 
