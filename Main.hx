@@ -129,13 +129,13 @@ class Main
 		global = getFile("Global");
 		var c : ClassData = { name: "Global", doc: null, variables: [], functions: [], variables_stat: [], functions_stat: [], include: "", native: "", sup: "" };
 		global.classes.push(c);
-		
+
 		for (td in patches.typedefs)
-			{
-				var name = toHaxeName(td.name);
-				var value = toHaxeName(td.value);
-				getFile(value).typedefs.push({name:name, value:value, doc:null});
-			}
+		{
+			var name = toHaxeName(td.name);
+			var value = toHaxeName(td.value);
+			getFile(value).typedefs.push({name:name, value:value, doc:null});
+		}
 
 		var index = Xml.parse(File.getContent(Path.join([ inputPath, "index.xml" ]))).firstElement();
 
@@ -144,16 +144,20 @@ class Main
 			Lib.println("The xml isn't version 1.8.*, may not work");
 		}
 
+		Sys.print(".");
+
 		var file;
 		for (compound in index.elements())
 		{
 			var compoundName = compound.firstChild().firstChild().nodeValue;
 			if (patches.ignores(compoundName))
 			{
-				Lib.println("Ignoring "+compoundName + " as specified by the patch file");
+				Lib.println("\nIgnoring "+compoundName + " as specified by the patch file");
 				continue;
 			}
-			
+
+			Sys.print(".");
+
 			file = Path.join([ inputPath, compound.get("refid") + ".xml" ]);
 
 			switch (compound.get("kind"))
@@ -176,10 +180,17 @@ class Main
 					var data = Xml.parse(File.getContent(file)).firstElement();
 					for (compounddef in data.elements())
 					{
-						buildFile(compounddef);
+						buildFile(compounddef, true);
 					}
 
-				case "dir", "page", "group":
+				case "group":
+					var data = Xml.parse(File.getContent(file)).firstElement();
+					for (compounddef in data.elements())
+					{
+						buildFile(compounddef, false);
+					}
+
+				case "dir", "page":
 					// ignore
 					//TODO: check the xmls to be sure
 					continue;
@@ -191,7 +202,7 @@ class Main
 			}
 		}
 
-		Lib.println("");
+		Lib.println("\n");
 		var i = 0;
 		for (f in files)
 		{
@@ -462,7 +473,7 @@ class Main
 			case "", "void":
 				"Void";
 
-			case "unsigned char", "unsigned", "size_t", "UInt":
+			case "unsigned char", "unsigned", "unsigned int", "size_t", "UInt":
 				"UInt";
 
 			case "float", "double", "long":
@@ -765,7 +776,7 @@ class Main
 
 		for (i in 0...args.argsName.length)
 		{
-			a.push('${args.argsName[i]}:${args.argsType[i]}');
+			a.push('${safeName(args.argsName[i])}:${args.argsType[i]}');
 		}
 
 		return '(${a.join(", ")})';
@@ -893,7 +904,7 @@ class Main
 		}
 	}
 
-	private function buildFile (compounddef:Xml) : Void
+	private function buildFile (compounddef:Xml, inGlobal:Bool) : Void
 	{
 		var realName = getXmlContent(compounddef, "compoundname");
 
@@ -914,9 +925,24 @@ class Main
 							case "enum":
 								buildEnum(memberdef, realName);
 
-							case "function", "typedef", "variable":
+							case "function", "variable":
 								buildGlobal(memberdef, realName);
-								continue;
+
+							case "typedef":
+								if (inGlobal)
+								{
+									buildGlobal(memberdef, realName);
+								}
+								else
+								{
+									var t = buildTypedef(memberdef, realName);
+
+									if (t != null)
+									{
+										var f = getFile(toHaxeName(t.name));
+										f.typedefs.push(t);
+									}
+								}
 
 							case "define":
 								// ignore
@@ -1041,6 +1067,7 @@ class Main
 
 		//TODO: if no need to find prefix still remove enum name from values' string
 		//TODO: need to update arg default values if enum values are modified
+		//TODO: pushing enums into their own file requires the update of their types in the functions signatures
 
 		var e:EnumData = { name: toHaxeName(name), values: values, doc: memberdef };
 		var f = getFile(e.name);
@@ -1386,7 +1413,7 @@ class Main
 					{
 						inOverload = true;
 
-						writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
+						writeLine(file, '@:overload(function ${toArgString(fn.args)} : ${fn.returnType} {})');
 					}
 					else
 					{
@@ -1440,7 +1467,7 @@ class Main
 				{
 					inOverload = true;
 
-					writeLine(file, '@:overload(function ${fn.name} ${toArgString(fn.args)} : ${fn.returnType} {})');
+					writeLine(file, '@:overload(function ${toArgString(fn.args)} : ${fn.returnType} {})');
 				}
 				else
 				{
