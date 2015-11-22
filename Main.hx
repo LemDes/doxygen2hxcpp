@@ -24,7 +24,7 @@ typedef RawTypedef = { name:String, value:String };
 
 class PatchFile
 {
-	var ignored = new Array<String>();
+	var ignored = new Map<String, Bool>();
 	public var typedefs = new Array<RawTypedef>();
 	public function new (?xml:Xml)
 	{
@@ -35,16 +35,16 @@ class PatchFile
 		else
 		{
 			// read patches
-			
+
 			// Get ignored file
 			var root = xml.elementsNamed("root").next();
 			var it = root.elementsNamed("ignore").next().elementsNamed("item");
 			while (it.hasNext())
 			{
 				var e = it.next();
-				ignored.push(e.get("name"));
+				ignored.set(e.get("name"), true);
 			}
-			
+
 			// Get unspecified typedef
 			it = root.elementsNamed("add").next().elementsNamed("typedef");
 			while (it.hasNext())
@@ -54,8 +54,11 @@ class PatchFile
 			}
 		}
 	}
-	
-	public inline function ignores (name:String) : Bool { return ignored.indexOf(name)!=-1;}
+
+	public inline function ignores (name:String) : Bool
+	{
+		return ignored.exists(name);
+	}
 }
 
 class Main
@@ -132,9 +135,7 @@ class Main
 
 		for (td in patches.typedefs)
 		{
-			var name = toHaxeName(td.name);
-			var value = toHaxeName(td.value);
-			getFile(value).typedefs.push({name:name, value:value, doc:null});
+			getFile(td.name).typedefs.push({ name: td.name, value: td.value, doc: null });
 		}
 
 		var index = Xml.parse(File.getContent(Path.join([ inputPath, "index.xml" ]))).firstElement();
@@ -467,16 +468,16 @@ class Main
 			case "bool":
 				"Bool";
 
-			case "char", "int":
+			case "char", "int", "short int", "long int":
 				"Int";
 
 			case "", "void":
 				"Void";
 
-			case "unsigned char", "unsigned", "unsigned int", "size_t", "UInt":
+			case "unsigned char", "unsigned", "unsigned int", "unsigned long int", "size_t", "UInt", "unsigned short int":
 				"UInt";
 
-			case "float", "double", "long":
+			case "float", "double", "long", "unsigned long":
 				"Float";
 
 			case "std::string", "std::wstring":
@@ -833,6 +834,8 @@ class Main
 
 	private function groupOverloadAndDefaultParams (arr:Array<FunctionData>) : Array<FunctionData>
 	{
+		//TODO: also remove duplicate (created because haxe has less type than c++, eg. short int and int)
+
 		arr.sort(function (a, b) {
 			return -1 * Reflect.compare(a.name, b.name);
 		});
@@ -968,6 +971,7 @@ class Main
 		var stat = memberdef.get("static") == "yes";
 		var name = getXmlContent(memberdef, "name");
 		var nameu = '${name}_';
+		var nv = new Map<String, String>();
 
 		var values = [];
 		var vname;
@@ -976,12 +980,16 @@ class Main
 		for (enumvalue in memberdef.elementsNamed("enumvalue"))
 		{
 			vname = getXmlContent(enumvalue, "name");
-			vinit = getXmlContent(enumvalue, "initializer").substr(2);
+			vinit = getXmlContent(enumvalue, "initializer").substr(2).trim();
 
 			if (vinit == "")
 			{
 				vid++;
 				vinit = '${vid}';
+			}
+			else if (vinit.startsWith("0x"))
+			{
+				// all good
 			}
 			else
 			{
@@ -990,6 +998,50 @@ class Main
 				if (i != null)
 				{
 					vid = i;
+					vinit = '${vid}';
+				}
+				else if (nv.exists(vinit))
+				{
+					vinit = '${nv.get(vinit)}';
+				}
+				else if (vinit.indexOf("|") > -1)
+				{
+					var ts = vinit.split("|");
+					var r = [];
+
+					for (t in ts)
+					{
+						if (t.startsWith("\n"))
+						{
+							t = t.substr(1);
+						}
+
+						t = t.trim();
+
+						if (t.startsWith("("))
+						{
+							t = t.substr(1);
+						}
+
+						if (t.endsWith(")"))
+						{
+							t = t.substr(0, t.length-1);
+						}
+
+						t = t.trim();
+
+						if (nv.exists(t))
+						{
+							r.push('${nv.get(t)}');
+						}
+						else
+						{
+							//TODO: cross enum value
+							//Lib.println('\nEnum error in "$name" unknown enum value "$t"');
+						}
+					}
+
+					vinit = r.join(" | ");
 				}
 			}
 
@@ -998,7 +1050,8 @@ class Main
 				vname = vname.substr(nameu.length);
 			}
 
-				values.push({ name: vname, value: vinit });
+			nv.set(vname, vinit);
+			values.push({ name: vname, value: vinit });
 		}
 
 		if (name.charCodeAt(0) == "@".code)
@@ -1097,9 +1150,12 @@ class Main
 		if (isConstructor)
 		{
 			stat = true;
-			name = "create";
-			type = toHaxeName(realName);
+			name = type = toHaxeName(realName);
 			native = 'new $realName';
+		}
+		else
+		{
+			name = toHaxeName(name, true);
 		}
 
 		if (isDestructor)
@@ -1109,7 +1165,7 @@ class Main
 			return null;
 		}
 
-		return { native: native, name: toHaxeName(name, true), args: args, returnType: type, doc: memberdef, overload: false };
+		return { native: native, name: name, args: args, returnType: type, doc: memberdef, overload: false };
 	}
 
 	private function buildTypedef (memberdef:Xml, realName:String) : TypedefData
@@ -1138,7 +1194,7 @@ class Main
 			def = def.substr(0, def.length - longName.length);
 		}
 
-		return { name: name, value: def, doc: memberdef };
+		return { name: toHaxeName(name), value: def, doc: memberdef };
 	}
 
 	private function buildVariable (memberdef:Xml, realName:String) : VariableData
@@ -1198,7 +1254,7 @@ class Main
 								{
 									continue;
 								}
-								else if (memberdef.get("static") == "yes")
+								else if (memberdef.get("static") == "yes" || obj.name == toHaxeName(realName)) // constructor
 								{
 									functions_stat.push(obj);
 								}
@@ -1352,7 +1408,7 @@ class Main
 
 			for (value in en.values)
 			{
-				 writeLine(file, '${value.name} = ${value.value};');
+				 writeLine(file, 'var ${value.name} = ${value.value};');
 			}
 
 			closeBracket(file);
