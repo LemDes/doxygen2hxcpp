@@ -765,7 +765,7 @@ class Main
 
 		for (i in 0...args.argsName.length)
 		{
-			a.push('${args.argsName[i]}:${args.argsType[i]}${if (args.argsValue[i] != "") " = " + args.argsValue[i] else ""}');
+			a.push('${args.argsName[i]}:${args.argsType[i]}');
 		}
 
 		return '(${a.join(", ")})';
@@ -803,11 +803,30 @@ class Main
 		return '$args->${fn.returnType}';
 	}
 
-	private function groupOverload (arr:Array<FunctionData>)
+	private function firstDefaultParameter (fn:FunctionData) : Int
+	{
+		var i = -1;
+
+		for (v in fn.args.argsValue)
+		{
+			i++;
+
+			if (v != "")
+			{
+				return i;
+			}
+		}
+
+		return -1;
+	}
+
+	private function groupOverloadAndDefaultParams (arr:Array<FunctionData>) : Array<FunctionData>
 	{
 		arr.sort(function (a, b) {
 			return -1 * Reflect.compare(a.name, b.name);
 		});
+
+		var res = [];
 
 		var lastName = "";
 		for (fn in arr)
@@ -820,9 +839,25 @@ class Main
 			{
 				lastName = fn.name;
 			}
+
+			res.push(fn);
+
+			var f:Int;
+			if ((f = firstDefaultParameter(fn)) > -1)
+			{
+				var n = fn.args.argsValue.length;
+				for (i in 1...(n-f+1))
+				{
+					var a = { argsValue: fn.args.argsValue.slice(0, n-i), argsType: fn.args.argsType.slice(0, n-i), argsName: fn.args.argsName.slice(0, n-i) };
+					var c = { returnType: fn.returnType, overload: true, native: "", name: fn.name, doc: null, args: a };
+					// fn (a:Int, b:Int = 2, c:Int = 3) => @ov(a:Int) + @ov(a:Int, b:Int) + fn(a:Int, b:Int, c:Int)
+					res.push(c);
+				}
+			}
 		}
 
-		arr.reverse();
+		res.reverse();
+		return res;
 	}
 
 	private function buildGlobal (memberdef:Xml, realName:String) : Void
@@ -1338,9 +1373,8 @@ class Main
 				}
 
 				//TODO: check double functions with and without const modifier
-				groupOverload(c.functions);
 				var inOverload = false;
-				for (fn in c.functions)
+				for (fn in groupOverloadAndDefaultParams(c.functions))
 				{
 					if (!inOverload)
 					{
@@ -1393,9 +1427,8 @@ class Main
 				writeLine(file, '@:native("${c.native}::${variable.native}") public static var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
 			}
 
-			groupOverload(c.functions_stat);
 			var inOverload = false;
-			for (fn in c.functions_stat)
+			for (fn in groupOverloadAndDefaultParams(c.functions_stat))
 			{
 				if (!inOverload)
 				{
