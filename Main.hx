@@ -459,6 +459,16 @@ class Main
 			//TODO: do something? but they already are cpp.Ref so maybe not
 			cppType = cppType.substr(0, cppType.length-2);
 		}
+	
+		var firstIndex = cppType.indexOf("<");
+		var lastIndex = cppType.indexOf(">");
+		if (firstIndex != -1 && lastIndex != -1) 
+		{
+			var mainType =  toHaxeType(cppType.substring(0, firstIndex));
+			var subTypes = cppType.substring(firstIndex+1,lastIndex).split(",").map(StringTools.trim).map(toHaxeType); 
+
+			return mainType+"<"+((subTypes.length > 1) ? subTypes.join(", ") : subTypes[0])+">";
+		}
 
 		var type = switch (cppType)
 		{
@@ -468,13 +478,13 @@ class Main
 			case "bool":
 				"Bool";
 
-			case "char", "int", "short int", "long int":
+			case "char", "int", "short int", "long int", "signed short", "signed char":
 				"Int";
 
 			case "", "void":
 				"Void";
 
-			case "unsigned char", "unsigned", "unsigned int", "unsigned long int", "size_t", "UInt", "unsigned short int":
+			case "unsigned char", "unsigned", "unsigned int", "unsigned long int", "size_t", "UInt", "unsigned short int", "unsigned short", "Uint8", "Uint16", "Uint32" :
 				"UInt";
 
 			case "float", "double", "long", "unsigned long":
@@ -1192,6 +1202,7 @@ class Main
 
 		var def = getXmlContent(memberdef, "definition").substr(8); //.split(" ");
 		var name = getXmlContent(memberdef, "name");
+		
 		var longName = '$realName::$name'; //TODO: templated realName
 	
 		if (!def.endsWith(name))
