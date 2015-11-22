@@ -459,7 +459,7 @@ class Main
 			//TODO: do something? but they already are cpp.Ref so maybe not
 			cppType = cppType.substr(0, cppType.length-2);
 		}
-	
+
 		var firstIndex = cppType.indexOf("<");
 		var lastIndex = cppType.indexOf(">");
 		if (firstIndex != -1 && lastIndex != -1) 
@@ -478,17 +478,35 @@ class Main
 			case "bool":
 				"Bool";
 
-			case "char", "int", "short int", "long int", "signed short", "signed char":
+			case "char", "signed char":
+				"cpp.Char";
+
+			case "int", "long int", "long":
 				"Int";
 
 			case "", "void":
 				"Void";
 
-			case "unsigned char", "unsigned", "unsigned int", "unsigned long int", "size_t", "UInt", "unsigned short int", "unsigned short", "Uint8", "Uint16", "Uint32" :
+			case "Uint8", "unsigned char":
+				"cpp.UInt8";
+
+			case "Uint16", "unsigned short int", "unsigned short":
+				"cpp.UInt16";
+
+			case "Uint32", "unsigned int":
+				"cpp.UInt32";
+
+			case "short int", "signed short":
+				"cpp.Int16";
+
+			case "unsigned", "unsigned long int", "size_t", "UInt", "unsigned long":
 				"UInt";
 
-			case "float", "double", "long", "unsigned long":
-				"Float";
+			case "float":
+				"cpp.Float32";
+
+			case "double":
+				"cpp.Float64";
 
 			case "std::string", "std::wstring":
 				"String";
@@ -585,21 +603,24 @@ class Main
 		}
 		return defval;
 	}
-	
+
 	private function toHaxeTemplateParams (memberdef:Xml) : Array<String>
 	{
 		var templates:Array<String> = [];
-		
+
 		for (templatelist in memberdef.elementsNamed("templateparamlist"))
 		{
 			for (param in templatelist.elementsNamed("param"))
 			{
-				var typeSplit = getXmlContent(param,"type").split(" ");
-				if (typeSplit.length == 2)
-					templates.push(typeSplit[1]);				
+				var typename = getXmlContent(param, "type");
+
+				if (typename.startsWith("typename "))
+				{
+					templates.push(typename.substr(9));
+				}
 			}
 		}
-		
+
 		return templates;
 	}
 
@@ -1159,7 +1180,7 @@ class Main
 		var stat = memberdef.get("static") == "yes";
 		var name = getXmlContent(memberdef, "name"); //TODO: if name is create will bug with the static create function of the constructor
 		var isConstructor = name == realName;
-		var isDestructor = name.startsWith("~") && name.substr(1) == realName; //TODO: doesn't work on templated classes
+		var isDestructor = name.startsWith("~");// && name.substr(1) == realName; //TODO: doesn't work on templated classes
 		var templatedParams = toHaxeTemplateParams(memberdef);
 		var args = toHaxeArgs(memberdef);
 		var type = toHaxeType(getType(memberdef));
@@ -1202,9 +1223,9 @@ class Main
 
 		var def = getXmlContent(memberdef, "definition").substr(8); //.split(" ");
 		var name = getXmlContent(memberdef, "name");
-		
+
 		var longName = '$realName::$name'; //TODO: templated realName
-	
+
 		if (!def.endsWith(name))
 		{
 			var sign = parseFunctionSign(def, name, realName);
@@ -1224,7 +1245,7 @@ class Main
 			//~ def = def.substr(0, def.length - longName.length);
 		}
 
-		return { name: toHaxeName(name), value: def, doc: memberdef };
+		return { name: toHaxeName(name), value: toHaxeType(def), doc: memberdef };
 	}
 
 	private function buildVariable (memberdef:Xml, realName:String) : VariableData
@@ -1422,7 +1443,7 @@ class Main
 		{
 			counter.typedefs++;
 			writeLine(file, "");
-			writeLine(file, 'typedef ${tp.name} = ${toHaxeType(tp.value)};');
+			writeLine(file, 'typedef ${tp.name} = ${tp.value};');
 		}
 
 		// Enums //TODO: needs its own file?
@@ -1500,13 +1521,13 @@ class Main
 					{
 						inOverload = true;
 
-						writeLine(file, '@:overload(function ${templatedParams}${toArgString(fn.args)} : ${fn.returnType} {})');
+						writeLine(file, '@:overload(function${templatedParams} ${toArgString(fn.args)} : ${fn.returnType} {})');
 					}
 					else
 					{
 						inOverload = false;
-						
-						writeLine(file, '@:native("${fn.native}") public function ${fn.name} ${templatedParams}${toArgString(fn.args)} : ${fn.returnType};');
+
+						writeLine(file, '@:native("${fn.native}") public function ${fn.name}${templatedParams} ${toArgString(fn.args)} : ${fn.returnType};');
 					}
 				}
 
@@ -1555,13 +1576,13 @@ class Main
 				{
 					inOverload = true;
 
-					writeLine(file, '@:overload(function ${templatedParams}${toArgString(fn.args)} : ${fn.returnType} {})');
+					writeLine(file, '@:overload(function${templatedParams} ${toArgString(fn.args)} : ${fn.returnType} {})');
 				}
 				else
 				{
 					inOverload = false;
 
-					writeLine(file, '@:native("${fn.native}") public static function ${fn.name} ${templatedParams}${toArgString(fn.args)} : ${fn.returnType};');
+					writeLine(file, '@:native("${fn.native}") public static function ${fn.name}${templatedParams} ${toArgString(fn.args)} : ${fn.returnType};');
 				}
 			}
 
