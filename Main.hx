@@ -17,7 +17,7 @@ typedef TypedefData = { name:String, value: String, doc:Xml };
 typedef FunctionData = { native:String, args:Args, name:String, returnType:String, doc:Xml, overload:Bool };
 typedef VariableData = { name:String, native:String, initializer:String, type:String, doc:Xml };
 typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat:Array<VariableData>, functions:Array<FunctionData>, functions_stat:Array<FunctionData>, doc:Xml, sup:String, native:String, include:String };
-typedef EnumData = { name:String, values:Array<String>, doc:Xml };
+typedef EnumData = { name:String, values:Array<{ name:String, value:String}>, doc:Xml };
 typedef UnionData = { name:String, values:String, doc:Xml };
 typedef FileData = { pack:Array<String>, name:String, typedefs:Array<TypedefData>, classes:Array<ClassData>, enums:Array<EnumData>, unions:Array<UnionData> };
 typedef RawTypedef = { name:String, value:String };
@@ -150,7 +150,7 @@ class Main
 			var compoundName = compound.firstChild().firstChild().nodeValue;
 			if (patches.ignores(compoundName))
 			{
-				Lib.println("Ignoring "+compoundName + " as specified by the patch file.");
+				Lib.println("Ignoring "+compoundName + " as specified by the patch file");
 				continue;
 			}
 			
@@ -491,7 +491,17 @@ class Main
 
 	private function writeLine (file:FileOutput, line:String, lineEnd=true) : Void
 	{
-		file.writeString('$_indent$line${if (lineEnd) "\n" else ""}');
+		if (line == "")
+		{
+			if (lineEnd)
+			{
+				file.writeString("\n");
+			}
+		}
+		else
+		{
+			file.writeString('$_indent$line${if (lineEnd) "\n" else ""}');
+		}
 	}
 
 	private function openBracket (file, lineEnd=true) : Void
@@ -761,7 +771,7 @@ class Main
 		return '(${a.join(", ")})';
 	}
 
-	private function parseFunctionSign (sign:String, name:String) : Fn
+	private function parseFunctionSign (sign:String, name:String, realName:String) : Fn
 	{
 		var i = sign.indexOf("(");
 		var returnType = sign.substr(0, i);
@@ -778,7 +788,7 @@ class Main
 			t[0] = t[0].substr(2);
 		}
 
-		if (t[0] != name)
+		if (t[0] != name && t[0] != '$realName::$name')
 		{
 			return null;
 		}
@@ -901,15 +911,25 @@ class Main
 		var values = [];
 		var vname;
 		var vinit;
-		var nbInit = 0;
+		var vid = -1;
 		for (enumvalue in memberdef.elementsNamed("enumvalue"))
 		{
 			vname = getXmlContent(enumvalue, "name");
-			vinit = getXmlContent(enumvalue, "initializer");
+			vinit = getXmlContent(enumvalue, "initializer").substr(2);
 
-			if (vinit != "")
+			if (vinit == "")
 			{
-				nbInit++;
+				vid++;
+				vinit = '${vid}';
+			}
+			else
+			{
+				var i = Std.parseInt(vinit);
+
+				if (i != null)
+				{
+					vid = i;
+				}
 			}
 
 			if (vname.startsWith(nameu))
@@ -917,42 +937,35 @@ class Main
 				vname = vname.substr(nameu.length);
 			}
 
-			values.push('$vname${if (vinit != "") " " + vinit else ""};');
-		}
-
-		if (nbInit > 0 && nbInit != values.length)
-		{
-			//TODO: do
-			Lib.println('Enum error in "$realName": named "$name" has mix of initializer presence/absence');
-			return;
+				values.push({ name: vname, value: vinit });
 		}
 
 		if (name.charCodeAt(0) == "@".code)
 		{
 			if (values.length == 1)
 			{
-				//TODO: explode into Global
-				Lib.println('Enum error in "$realName": nameless ($name) with only one value but no patch');
+				// Explode into Global
+				global.classes[0].variables_stat.push({ name: values[0].name, type: "Int", native: "", initializer: values[0].value, doc: null });
 				return;
 			}
 
 			// Find longuest prefix in all value
-			var prefix = values[0];
+			var prefix = values[0].name;
 			var i;
 			var l;
 			for (value in values)
 			{
-				if (value.startsWith(prefix))
+				if (value.name.startsWith(prefix))
 				{
 					continue;
 				}
 
-				l = (prefix.length < value.length) ? prefix.length : value.length;
+				l = (prefix.length < value.name.length) ? prefix.length : value.name.length;
 				i = 0;
 
 				for (j in 0...l+1)
 				{
-					if (value.charAt(i) != prefix.charAt(i))
+					if (value.name.charAt(i) != prefix.charAt(i))
 					{
 						break;
 					}
@@ -969,14 +982,17 @@ class Main
 
 			if (prefix == "")
 			{
-				//TODO: explode into Global
-				Lib.println('Enum error in "$realName": nameless ($name) with no common prefix and no patch');
+				// Explode into Global
+				for (v in values)
+				{
+					 global.classes[0].variables_stat.push({ name: v.name, type: "Int", native: "", initializer: v.value, doc: null });
+				}
 				return;
 			}
 
 			for (i in 0...values.length)
 			{
-				values[i] = values[i].substr(prefix.length); //TODO: also remove 'wx' (basePack)
+				values[i].name = values[i].name.substr(prefix.length); //TODO: also remove 'wx' (basePack)
 			}
 
 			if (prefix.endsWith("_"))
@@ -1042,9 +1058,9 @@ class Main
 		var name = getXmlContent(memberdef, "name");
 		var longName = '$realName::$name'; //TODO: templated realName
 
-		if (!def.endsWith(longName))
+		if (!def.endsWith(name))
 		{
-			var sign = parseFunctionSign(def, longName);
+			var sign = parseFunctionSign(def, name, realName);
 
 			if (sign == null)
 			{
@@ -1269,12 +1285,12 @@ class Main
 		{
 			counter.enums++;
 			writeLine(file, "");
-			writeLine(file, 'enum ${en.name}');
+			writeLine(file, '@:enum abstract ${en.name} (Int)');
 			openBracket(file);
 
 			for (value in en.values)
 			{
-				writeLine(file, value);
+				 writeLine(file, '${value.name} = ${value.value};');
 			}
 
 			closeBracket(file);
