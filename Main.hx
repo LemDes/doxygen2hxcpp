@@ -278,7 +278,7 @@ class Main
 		{
 			return "";
 		}
-
+		
 		if (name.startsWith(basePack))
 		{
 			name = name.substr(basePack.length);
@@ -1099,7 +1099,7 @@ class Main
 			}
 
 			nv.set(vname, vinit);
-			values.push({ name: vname, value: vinit });
+			values.push({ name: toHaxeName(vname), value: vinit });
 		}
 
 		if (name.charCodeAt(0) == "@".code)
@@ -1107,7 +1107,7 @@ class Main
 			if (values.length == 1)
 			{
 				// Explode into Global
-				global.classes[0].variables_stat.push({ name: values[0].name, type: "Int", native: "", initializer: values[0].value, doc: null });
+				global.classes[0].variables_stat.push({ name: toHaxeName(values[0].name), type: "Int", native: "", initializer: values[0].value, doc: null });
 				return;
 			}
 
@@ -1147,7 +1147,7 @@ class Main
 				// Explode into Global
 				for (v in values)
 				{
-					 global.classes[0].variables_stat.push({ name: v.name, type: "Int", native: "", initializer: v.value, doc: null });
+					 global.classes[0].variables_stat.push({ name: toHaxeName(v.name), type: "Int", native: "", initializer: v.value, doc: null });
 				}
 				return;
 			}
@@ -1251,7 +1251,7 @@ class Main
 	private function buildVariable (memberdef:Xml, realName:String) : VariableData
 	{
 		var name = getXmlContent(memberdef, "name");
-		var initializer = getXmlContent(memberdef, "initializer");
+		var initializer = getXmlContent(memberdef, "initializer").substr(2).trim();
 		var type = toHaxeType(getType(memberdef));
 
 		return { name: toHaxeName(name, true), native: name, initializer: initializer, type: type, doc: memberdef };
@@ -1503,7 +1503,7 @@ class Main
 				{
 					writeLine(file, "");
 					genDoc(variable.doc, file);
-					writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+					writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " = " + variable.initializer else ""};');
 				}
 
 				//TODO: check double functions with and without const modifier
@@ -1559,7 +1559,7 @@ class Main
 			{
 				writeLine(file, "");
 				genDoc(variable.doc, file);
-				writeLine(file, '@:native("${c.native}::${variable.native}") public static var ${variable.name} : ${variable.type}${if (variable.initializer != "") " " + variable.initializer else ""};');
+				writeLine(file, '@:native("${c.native}::${variable.native}") public static var ${variable.name} : ${variable.type}${if (variable.initializer != "") " = " + variable.initializer else ""};');
 			}
 
 			var inOverload = false;
