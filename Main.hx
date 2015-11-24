@@ -415,6 +415,12 @@ class Main
 			return "Dynamic";
 		}
 
+		if (cppType.startsWith("struct "))
+		{
+			//TODO: what to do with that?
+			cppType = cppType.substr(7);
+		}
+
 		if (cppType.indexOf("(") > -1)
 		{
 
@@ -499,7 +505,7 @@ class Main
 			case "short int", "signed short":
 				"cpp.Int16";
 
-			case "unsigned", "unsigned long int", "size_t", "UInt", "unsigned long":
+			case "unsigned", "unsigned long int", "size_t", "UInt", "unsigned long", "ssize_t":
 				"UInt";
 
 			case "float":
@@ -944,7 +950,9 @@ class Main
 
 				if (obj != null)
 				{
-					global.typedefs.push(obj);
+					// put global typedef in their own files
+					var f = getFile(obj.name);
+					f.typedefs.push(obj);
 				}
 
 			case "variable":

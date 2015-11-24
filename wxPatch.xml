@@ -9,6 +9,8 @@
 		<typedef name="ObjectConstructorFn" is="Void->Object" />
 		<typedef name="USE_UNICODE_dependent" is="cpp.UInt16" />
 
+		<typedef name="WXMSG" is="Dynamic" /> <!-- missing from doc and in source is tagMSG, but this own is missing too -->
+
 		<typedef name="EventFunction" is="Dynamic" />
 		<typedef name="EventTable" is="Dynamic" />
 		
