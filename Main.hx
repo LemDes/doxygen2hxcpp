@@ -16,7 +16,7 @@ typedef Fn = { returnType:String, args:Args };
 typedef TypedefData = { name:String, value: String, doc:Xml };
 typedef FunctionData = { native:String, args:Args, name:String, returnType:String, templatedParams:Array<String>, doc:Xml, overload:Bool };
 typedef VariableData = { name:String, native:String, initializer:String, type:String, doc:Xml };
-typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat:Array<VariableData>, functions:Array<FunctionData>, functions_stat:Array<FunctionData>, doc:Xml, sup:String, native:String, include:String };
+typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat:Array<VariableData>, functions:Array<FunctionData>, functions_stat:Array<FunctionData>, doc:Xml, sup:String, native:String, include:String, typedefs:Array<TypedefData> };
 typedef EnumData = { name:String, values:Array<{ name:String, value:String}>, doc:Xml };
 typedef UnionData = { name:String, values:String, doc:Xml };
 typedef FileData = { pack:Array<String>, name:String, typedefs:Array<TypedefData>, classes:Array<ClassData>, enums:Array<EnumData>, unions:Array<UnionData> };
@@ -130,7 +130,7 @@ class Main
 
 		files = new Map<String, FileData>();
 		global = getFile("Global");
-		var c : ClassData = { name: "Global", doc: null, variables: [], functions: [], variables_stat: [], functions_stat: [], include: "", native: "", sup: "" };
+		var c : ClassData = { name: "Global", typedefs: [], doc: null, variables: [], functions: [], variables_stat: [], functions_stat: [], include: "", native: "", sup: "" };
 		global.classes.push(c);
 
 		for (td in patches.typedefs)
@@ -819,8 +819,13 @@ class Main
 		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
 	}
 
-	private function toArgString (args:Args) : String
+	private function toArgString (args:Args, ?bake:String->String) : String
 	{
+		if (bake == null)
+		{
+			bake = function (s) return s;
+		}
+
 		var a = [];
 
 		for (i in 0...args.argsName.length)
@@ -1363,11 +1368,10 @@ class Main
 			}
 		}
 
-		var c : ClassData = { name: haxeName, doc: compounddef, variables: variables, functions: functions, variables_stat: variables_stat, functions_stat: functions_stat, include: include, native: realName, sup: sup };
+		var c : ClassData = { name: haxeName, doc: compounddef, typedefs: typedefs, variables: variables, functions: functions, variables_stat: variables_stat, functions_stat: functions_stat, include: include, native: realName, sup: sup };
 
 		var f = getFile(fileName);
 		f.classes.push(c);
-		f.typedefs = f.typedefs.concat(typedefs);
 	}
 
 	private function getEithers (compounddef:Xml) : String
@@ -1481,6 +1485,24 @@ class Main
 		{
 			counter.classes++;
 
+			var toBake = new Map<String, String>();
+			for (t in c.typedefs)
+			{
+				toBake.set(t.name, t.value);
+			}
+
+			var bake = function (type:String) : String
+			{
+				if (toBake.exists(type))
+				{
+					return toBake.get(type);
+				}
+				else
+				{
+					return type;
+				}
+			};
+
 			// Class header
 			if (c.name != "Global")
 			{
@@ -1503,7 +1525,7 @@ class Main
 				{
 					writeLine(file, "");
 					genDoc(variable.doc, file);
-					writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${variable.type}${if (variable.initializer != "") " = " + variable.initializer else ""};');
+					writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${bake(variable.type)}${if (variable.initializer != "") " = " + variable.initializer else ""};');
 				}
 
 				//TODO: check double functions with and without const modifier
@@ -1521,13 +1543,13 @@ class Main
 					{
 						inOverload = true;
 
-						writeLine(file, '@:overload(function${templatedParams} ${toArgString(fn.args)} : ${fn.returnType} {})');
+						writeLine(file, '@:overload(function${templatedParams} ${toArgString(fn.args, bake)} : ${bake(fn.returnType)} {})');
 					}
 					else
 					{
 						inOverload = false;
 
-						writeLine(file, '@:native("${fn.native}") public function ${fn.name}${templatedParams} ${toArgString(fn.args)} : ${fn.returnType};');
+						writeLine(file, '@:native("${fn.native}") public function ${fn.name}${templatedParams} ${toArgString(fn.args, bake)} : ${bake(fn.returnType)};');
 					}
 				}
 
@@ -1559,7 +1581,7 @@ class Main
 			{
 				writeLine(file, "");
 				genDoc(variable.doc, file);
-				writeLine(file, '@:native("${c.native}::${variable.native}") public static var ${variable.name} : ${variable.type}${if (variable.initializer != "") " = " + variable.initializer else ""};');
+				writeLine(file, '@:native("${c.native}::${variable.native}") public static var ${variable.name} : ${bake(variable.type)}${if (variable.initializer != "") " = " + variable.initializer else ""};');
 			}
 
 			var inOverload = false;
@@ -1576,13 +1598,13 @@ class Main
 				{
 					inOverload = true;
 
-					writeLine(file, '@:overload(function${templatedParams} ${toArgString(fn.args)} : ${fn.returnType} {})');
+					writeLine(file, '@:overload(function${templatedParams} ${toArgString(fn.args, bake)} : ${bake(fn.returnType)} {})');
 				}
 				else
 				{
 					inOverload = false;
 
-					writeLine(file, '@:native("${fn.native}") public static function ${fn.name}${templatedParams} ${toArgString(fn.args)} : ${fn.returnType};');
+					writeLine(file, '@:native("${fn.native}") public static function ${fn.name}${templatedParams} ${toArgString(fn.args, bake)} : ${bake(fn.returnType)};');
 				}
 			}
 
