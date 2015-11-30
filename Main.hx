@@ -11,21 +11,28 @@ import neko.Lib;
 
 using StringTools;
 
-typedef Args = { argsName:Array<String>, argsType:Array<String>, argsValue:Array<String> };
-typedef Fn = { returnType:String, args:Args };
-typedef TypedefData = { name:String, value: String, doc:Xml };
-typedef FunctionData = { native:String, args:Args, name:String, returnType:String, templatedParams:Array<String>, doc:Xml, overload:Bool };
-typedef VariableData = { name:String, native:String, initializer:String, type:String, doc:Xml };
+enum Value
+{
+	Cpp(s:String);
+	Haxe(s:String);
+	Unresolved(id:String);
+}
+
+typedef Args = { argsName:Array<String>, argsType:Array<Value>, argsValue:Array<String> };
+typedef Fn = { returnType:Value, args:Args };
+typedef TypedefData = { name:String, value:Value, doc:Xml };
+typedef FunctionData = { native:String, args:Args, name:String, returnType:Value, templatedParams:Array<String>, doc:Xml, overload:Bool };
+typedef VariableData = { name:String, native:String, initializer:String, type:Value, doc:Xml };
 typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat:Array<VariableData>, functions:Array<FunctionData>, functions_stat:Array<FunctionData>, doc:Xml, sup:String, native:String, include:String, typedefs:Array<TypedefData> };
-typedef EnumData = { name:String, values:Array<{ name:String, value:String}>, doc:Xml };
+typedef EnumData = { name:String, values:Array<{ name:String, value:Value}>, doc:Xml };
 typedef UnionData = { name:String, values:String, doc:Xml };
 typedef FileData = { pack:Array<String>, name:String, typedefs:Array<TypedefData>, classes:Array<ClassData>, enums:Array<EnumData>, unions:Array<UnionData> };
-typedef RawTypedef = { name:String, value:String };
 
 class PatchFile
 {
 	var ignored = new Map<String, Bool>();
-	public var typedefs = new Array<RawTypedef>();
+	public var typedefs = new Array<TypedefData>();
+
 	public function new (?xml:Xml)
 	{
 		if (xml == null)
@@ -50,7 +57,7 @@ class PatchFile
 			while (it.hasNext())
 			{
 				var e = it.next();
-				typedefs.push({ name: e.get("name"), value: e.get("is")});
+				typedefs.push({ name: e.get("name"), value: Haxe(e.get("is")), doc: null });
 			}
 		}
 	}
@@ -213,6 +220,22 @@ class Main
 		}
 
 		Lib.println('\rDone! $nb files generated from ${counter.classes} class(es), ${counter.typedefs} typedef(s), ${counter.enums} enum(s) and ${counter.unions} union(s).');
+	}
+
+	private function getValue (v:Value) : String
+	{
+		return switch (v)
+		{
+			case Haxe(s):
+				s;
+
+			case Cpp(s):
+				toHaxeType(s);
+
+			case Unresolved(s):
+				//TODO: resolve it
+				"";
+		}
 	}
 
 	private function getFile (name:String) : FileData
@@ -680,7 +703,7 @@ class Main
 				}
 			}
 
-			argsType.push(type);
+			argsType.push(Haxe(type));
 			if (type == "haxe.extern.Rest<Dynamic>")
 			{
 				argsName.push("otherArgs");
@@ -818,18 +841,18 @@ class Main
 			name = safeName(name);
 
 			argsName.push(name);
-			argsType.push(t);
+			argsType.push(Haxe(t));
 			argsValue.push(defaultValue);
 		}
 
 		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
 	}
 
-	private function toArgString (args:Args, ?bake:String->String) : String
+	private function toArgString (args:Args, ?bake:Value->String) : String
 	{
 		if (bake == null)
 		{
-			bake = function (s) return s;
+			bake = getValue;
 		}
 
 		var a = [];
@@ -864,7 +887,7 @@ class Main
 			return null;
 		}
 
-		return { returnType: toHaxeType(returnType), args: argstringToArgs('(${t[1]}') };
+		return { returnType: Haxe(toHaxeType(returnType)), args: argstringToArgs('(${t[1]}') };
 	}
 
 	private function fnType (fn:Fn) : String
@@ -1111,8 +1134,9 @@ class Main
 				vname = vname.substr(nameu.length);
 			}
 
+			//TODO: homogenised enum name
 			nv.set(vname, vinit);
-			values.push({ name: toHaxeName(vname), value: vinit });
+			values.push({ name: toHaxeName(vname), value: Cpp(vinit) });
 		}
 
 		if (name.charCodeAt(0) == "@".code)
@@ -1120,7 +1144,7 @@ class Main
 			if (values.length == 1)
 			{
 				// Explode into Global
-				global.classes[0].variables_stat.push({ name: toHaxeName(values[0].name), type: "Int", native: "", initializer: values[0].value, doc: null });
+				global.classes[0].variables_stat.push({ name: toHaxeName(values[0].name), type: Haxe("Int"), native: "", initializer: getValue(values[0].value), doc: null });
 				return;
 			}
 
@@ -1160,7 +1184,7 @@ class Main
 				// Explode into Global
 				for (v in values)
 				{
-					 global.classes[0].variables_stat.push({ name: toHaxeName(v.name), type: "Int", native: "", initializer: v.value, doc: null });
+					 global.classes[0].variables_stat.push({ name: toHaxeName(v.name), type: Haxe("Int"), native: "", initializer: getValue(v.value), doc: null });
 				}
 				return;
 			}
@@ -1227,7 +1251,7 @@ class Main
 			return null;
 		}
 
-		return { native: native, name: name, args: args, returnType: type, templatedParams: templatedParams, doc: memberdef, overload: false };
+		return { native: native, name: name, args: args, returnType: Haxe(type), templatedParams: templatedParams, doc: memberdef, overload: false };
 	}
 
 	private function buildTypedef (memberdef:Xml, realName:String) : TypedefData
@@ -1258,7 +1282,7 @@ class Main
 			//~ def = def.substr(0, def.length - longName.length);
 		}
 
-		return { name: toHaxeName(name), value: toHaxeType(def), doc: memberdef };
+		return { name: toHaxeName(name), value: Haxe(toHaxeType(def)), doc: memberdef };
 	}
 
 	private function buildVariable (memberdef:Xml, realName:String) : VariableData
@@ -1267,7 +1291,7 @@ class Main
 		var initializer = getXmlContent(memberdef, "initializer").substr(2).trim();
 		var type = toHaxeType(getType(memberdef));
 
-		return { name: toHaxeName(name, true), native: name, initializer: initializer, type: type, doc: memberdef };
+		return { name: toHaxeName(name, true), native: name, initializer: initializer, type: Haxe(type), doc: memberdef };
 	}
 
 	private function buildClass (compounddef:Xml) : Void
@@ -1496,18 +1520,20 @@ class Main
 			var toBake = new Map<String, String>();
 			for (t in c.typedefs)
 			{
-				toBake.set(t.name, t.value);
+				toBake.set(t.name, getValue(t.value));
 			}
 
-			var bake = function (type:String) : String
+			var bake = function (type:Value) : String
 			{
-				if (toBake.exists(type))
+				var value : String = getValue(type);
+
+				if (toBake.exists(value))
 				{
-					return toBake.get(type);
+					return toBake.get(value);
 				}
 				else
 				{
-					return type;
+					return value;
 				}
 			};
 
