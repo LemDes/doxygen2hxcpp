@@ -11,20 +11,20 @@ import neko.Lib;
 
 using StringTools;
 
-enum Value
+enum TypeValue
 {
 	Cpp(s:String);
 	Haxe(s:String);
 	Unresolved(id:String);
 }
 
-typedef Args = { argsName:Array<String>, argsType:Array<Value>, argsValue:Array<String> };
-typedef Fn = { returnType:Value, args:Args };
-typedef TypedefData = { name:String, value:Value, doc:Xml };
-typedef FunctionData = { native:String, args:Args, name:String, returnType:Value, templatedParams:Array<String>, doc:Xml, overload:Bool };
-typedef VariableData = { name:String, native:String, initializer:String, type:Value, doc:Xml };
+typedef Args = { argsName:Array<String>, argsType:Array<TypeValue>, argsDefault:Int };
+typedef Fn = { returnType:TypeValue, args:Args };
+typedef TypedefData = { name:String, value:TypeValue, doc:Xml };
+typedef FunctionData = { native:String, args:Args, name:String, returnType:TypeValue, templatedParams:Array<String>, doc:Xml, overload:Bool };
+typedef VariableData = { name:String, native:String, initializer:String, type:TypeValue, doc:Xml };
 typedef ClassData = { name:String, variables:Array<VariableData>, variables_stat:Array<VariableData>, functions:Array<FunctionData>, functions_stat:Array<FunctionData>, doc:Xml, sup:String, native:String, include:String, typedefs:Array<TypedefData> };
-typedef EnumData = { name:String, values:Array<{ name:String, value:Value}>, doc:Xml };
+typedef EnumData = { name:String, values:Array<{ name:String, value:TypeValue}>, doc:Xml };
 typedef UnionData = { name:String, values:String, doc:Xml };
 typedef FileData = { pack:Array<String>, name:String, typedefs:Array<TypedefData>, classes:Array<ClassData>, enums:Array<EnumData>, unions:Array<UnionData> };
 
@@ -222,7 +222,7 @@ class Main
 		Lib.println('\rDone! $nb files generated from ${counter.classes} class(es), ${counter.typedefs} typedef(s), ${counter.enums} enum(s) and ${counter.unions} union(s).');
 	}
 
-	private function getValue (v:Value) : String
+	private function getValue (v:TypeValue) : String
 	{
 		return switch (v)
 		{
@@ -230,7 +230,7 @@ class Main
 				s;
 
 			case Cpp(s):
-				toHaxeType(s);
+				getValue(toHaxeType(s));
 
 			case Unresolved(s):
 				//TODO: resolve it
@@ -430,12 +430,29 @@ class Main
 		}
 	}
 
-	private function toHaxeType (cppType:String) : String
+	private function fuseType (a:TypeValue, b:TypeValue) : TypeValue
+	{
+		return switch ([a, b]) {
+			case [Haxe(s1), Haxe(s2)]:
+				Haxe(s1 + s2);
+
+			case [Cpp(s1), Cpp(s2)]:
+				Cpp(s1 + s2);
+
+			case [Unresolved(s1), Unresolved(s2)]:
+				Unresolved(s1 + s2);
+
+			default:
+				throw "Cannot fuse two different type of TypeValue";
+		}
+	}
+
+	private function toHaxeType (cppType:String) : TypeValue
 	{
 		if (cppType == "void *")
 		{
 			// any pointer
-			return "Dynamic";
+			return Haxe("Dynamic");
 		}
 
 		if (cppType.startsWith("struct "))
@@ -454,19 +471,21 @@ class Main
 			var paramString = tmp[tmp.length-1];
 			var parameters = paramString.substr(0,paramString.length-1).split(",");
 
-			var type = "";
+			var type = Haxe("");
 			for (param in parameters)
 			{
-				type += toHaxeType(param.ltrim().split(" ")[0]) + " -> ";
+				type = Haxe(getValue(type) + getValue(toHaxeType(param.ltrim().split(" ")[0])) + " -> ");
 			}
-			type += returnType;
+
+			type = fuseType(type, returnType);
+
 			return type;
 		}
 
-		if (cppType.indexOf("::") > -1)
+		if (cppType.indexOf("::") > -1 && !cppType.startsWith("std::"))
 		{
 			var tmp = cppType.split("::");
-			return '${toHaxeType(tmp[0])}.${toHaxeType(tmp[1])}';
+			return Haxe('${getValue(toHaxeType(tmp[0]))}.${getValue(toHaxeType(tmp[1]))}');
 		}
 
 		var pointer = cppType.endsWith(" *");
@@ -496,7 +515,13 @@ class Main
 			var mainType =  toHaxeType(cppType.substring(0, firstIndex));
 			var subTypes = cppType.substring(firstIndex+1,lastIndex).split(",").map(StringTools.trim).map(toHaxeType); 
 
-			return mainType+"<"+((subTypes.length > 1) ? subTypes.join(", ") : subTypes[0])+">";
+			var t = subTypes[0];
+			for (i in 1...subTypes.length)
+			{
+				t = fuseType(fuseType(t, Haxe(", ")), subTypes[i]);
+			}
+
+			return Haxe(getValue(mainType) + "<" + getValue(t) + ">");
 		}
 
 		var type = switch (cppType)
@@ -546,15 +571,15 @@ class Main
 
 		if (pointer)
 		{
-			return 'cpp.Pointer<$type>';
+			return Haxe('cpp.Pointer<$type>');
 		}
 		else if (arrayarray)
 		{
-			return 'Array<cpp.Pointer<$type>>';
+			return Haxe('Array<cpp.Pointer<$type>>');
 		}
 		else
 		{
-			return type;
+			return Haxe(type);
 		}
 	}
 
@@ -655,12 +680,12 @@ class Main
 
 	private function toHaxeArgs (memberdef:Xml) : Args
 	{
-		var sep = function (s:String) : String
+		var sep = function (s:String) : TypeValue
 		{
 			if (s.indexOf("::") > -1 && !s.startsWith("std::"))
 			{
 				var tmp = s.split("::");
-				return '${toHaxeType(tmp[0])}.${toHaxeType(tmp[1])}';
+				return Haxe('${getValue(toHaxeType(tmp[0]))}.${getValue(toHaxeType(tmp[1]))}');
 			}
 			else
 			{
@@ -669,16 +694,24 @@ class Main
 		};
 
 		var argsName = [];
-		var argsValue = [];
 		var argsType = [];
+		var argsDefault = -1;
 
 		var it = memberdef.elementsNamed("param");
+		var i = -1;
 		while (it.hasNext())
 		{
+			i++;
 			var e = it.next();
 			var type = toHaxeType(getType(e));
 			var array = getXmlContent(e,"array");
 			var value = getDefaultValue(e);
+
+			if (value != "" && argsDefault == -1)
+			{
+				argsDefault = i;
+			}
+
 			if (array != "")
 			{
 				var array_number = array.split("[").length - 1;
@@ -697,14 +730,14 @@ class Main
 				{
 					while (array_number > 0)
 					{
-						type = "Array<"+type+">";
+						type = Haxe("Array<" + getValue(type) + ">");
 						array_number--;
 					}
 				}
 			}
 
-			argsType.push(Haxe(type));
-			if (type == "haxe.extern.Rest<Dynamic>")
+			argsType.push(type);
+			if (getValue(type) == "haxe.extern.Rest<Dynamic>")
 			{
 				argsName.push("otherArgs");
 			}
@@ -712,21 +745,20 @@ class Main
 			{
 				argsName.push(getXmlContent(e,"declname"));
 			}
-			argsValue.push(value);
 			//TODO: default value in wxList value_type() = T*
 		}
 
-		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
+		return { argsName: argsName, argsType: argsType, argsDefault: argsDefault };
 	}
 
 	private function argstringToArgs (argstring:String) : Args
 	{
-		var sep = function (s:String) : String
+		var sep = function (s:String) : TypeValue
 		{
 			if (s.indexOf("::") > -1 && !s.startsWith("std::"))
 			{
 				var tmp = s.split("::");
-				return '${toHaxeType(tmp[0])}.${toHaxeType(tmp[1])}';
+				return Haxe('${getValue(toHaxeType(tmp[0]))}.${getValue(toHaxeType(tmp[1]))}');
 			}
 			else
 			{
@@ -735,8 +767,8 @@ class Main
 		};
 
 		var argsName = [];
-		var argsValue = [];
 		var argsType = [];
+		var argsDefault = -1;
 
 		if (argstring.endsWith("=0"))
 		{
@@ -752,14 +784,16 @@ class Main
 
 		if (argstring == "()")
 		{
-			return { argsName: [], argsType: [], argsValue: [] };
+			return { argsName: [], argsType: [], argsDefault: -1 };
 		}
 
 		var args = argstring.substr(1, argstring.length-2).split(','); //TODO: not reliable, redo function
 		var haxeArgs = [];
+		var i = -1;
 
 		for (arg in args)
 		{
+			i++;
 			var type = arg.trim().split(" ");
 
 			var name = type.pop();
@@ -780,7 +814,7 @@ class Main
 			{
 				var tmp = name.split("=");
 				name = tmp[0];
-				defaultValue = sep(tmp[1]);
+				defaultValue = getValue(sep(tmp[1]));
 
 				var f = defaultValue.charCodeAt(0);
 				if (f >= "0".code && f <= "9".code) // number
@@ -824,7 +858,7 @@ class Main
 
 			if (pointerArg)
 			{
-				t = 'cpp.Pointer<$t>';
+				t = Haxe("cpp.Pointer<" + getValue(t) + ">");
 			}
 
 			//TODO: templated arg type; see Array.sort
@@ -835,20 +869,24 @@ class Main
 			var array_number = raw.length -1;
 			while (array_number > 0)
 			{
-				t = "Array<"+t+">";
+				t = Haxe("Array<"+getValue(t)+">");
 				array_number--;
 			}
 			name = safeName(name);
 
 			argsName.push(name);
-			argsType.push(Haxe(t));
-			argsValue.push(defaultValue);
+			argsType.push(t);
+
+			if (defaultValue != "" && argsDefault == -1)
+			{
+				argsDefault = i;
+			}
 		}
 
-		return { argsName: argsName, argsType: argsType, argsValue: argsValue };
+		return { argsName: argsName, argsType: argsType, argsDefault: argsDefault };
 	}
 
-	private function toArgString (args:Args, ?bake:Value->String) : String
+	private function toArgString (args:Args, ?bake:TypeValue->String) : String
 	{
 		if (bake == null)
 		{
@@ -859,7 +897,7 @@ class Main
 
 		for (i in 0...args.argsName.length)
 		{
-			a.push('${safeName(args.argsName[i])}:${args.argsType[i]}');
+			a.push('${safeName(args.argsName[i])}:${getValue(args.argsType[i])}');
 		}
 
 		return '(${a.join(", ")})';
@@ -887,31 +925,14 @@ class Main
 			return null;
 		}
 
-		return { returnType: Haxe(toHaxeType(returnType)), args: argstringToArgs('(${t[1]}') };
+		return { returnType: toHaxeType(returnType), args: argstringToArgs('(${t[1]}') };
 	}
 
-	private function fnType (fn:Fn) : String
+	private function fnType (fn:Fn) : TypeValue
 	{
 		var args = if (fn.args.argsType.length > 0) fn.args.argsType.join("->") else "Void";
 
-		return '$args->${fn.returnType}';
-	}
-
-	private function firstDefaultParameter (fn:FunctionData) : Int
-	{
-		var i = -1;
-
-		for (v in fn.args.argsValue)
-		{
-			i++;
-
-			if (v != "")
-			{
-				return i;
-			}
-		}
-
-		return -1;
+		return Haxe('$args->${fn.returnType}');
 	}
 
 	private function groupOverloadAndDefaultParams (arr:Array<FunctionData>) : Array<FunctionData>
@@ -939,12 +960,12 @@ class Main
 			res.push(fn);
 
 			var f:Int;
-			if ((f = firstDefaultParameter(fn)) > -1)
+			if ((f = fn.args.argsDefault) > -1)
 			{
-				var n = fn.args.argsValue.length;
+				var n = fn.args.argsName.length;
 				for (i in 1...(n-f+1))
 				{
-					var a = { argsValue: fn.args.argsValue.slice(0, n-i), argsType: fn.args.argsType.slice(0, n-i), argsName: fn.args.argsName.slice(0, n-i) };
+					var a = { argsDefault: fn.args.argsDefault, argsType: fn.args.argsType.slice(0, n-i), argsName: fn.args.argsName.slice(0, n-i) };
 					var c = { returnType: fn.returnType, overload: true, native: "", name: fn.name, templatedParams: fn.templatedParams, doc: null, args: a };
 					// fn (a:Int, b:Int = 2, c:Int = 3) => @ov(a:Int) + @ov(a:Int, b:Int) + fn(a:Int, b:Int, c:Int)
 					res.push(c);
@@ -1227,7 +1248,7 @@ class Main
 
 		if (name.startsWith("operator"))
 		{
-			//TODO: abstract?
+			//TODO: abstract, uses inline proxy function for operators, and @:forward + haxe's dev version @:forwardStatics
 			return null;
 		}
 
@@ -1236,7 +1257,8 @@ class Main
 		if (isConstructor)
 		{
 			stat = true;
-			name = type = toHaxeName(realName);
+			name = toHaxeName(realName);
+			type = Haxe(name);
 			native = 'new $realName';
 		}
 		else
@@ -1251,7 +1273,7 @@ class Main
 			return null;
 		}
 
-		return { native: native, name: name, args: args, returnType: Haxe(type), templatedParams: templatedParams, doc: memberdef, overload: false };
+		return { native: native, name: name, args: args, returnType: type, templatedParams: templatedParams, doc: memberdef, overload: false };
 	}
 
 	private function buildTypedef (memberdef:Xml, realName:String) : TypedefData
@@ -1260,6 +1282,7 @@ class Main
 
 		var def = getXmlContent(memberdef, "definition").substr(8); //.split(" ");
 		var name = getXmlContent(memberdef, "name");
+		var tv;
 
 		var longName = '$realName::$name'; //TODO: templated realName
 
@@ -1274,15 +1297,15 @@ class Main
 				return null;
 			}
 
-			def = fnType(sign);
+			tv = fnType(sign);
 		}
 		else
 		{
-			def = toHaxeType(getType(memberdef));
+			tv = toHaxeType(getType(memberdef));
 			//~ def = def.substr(0, def.length - longName.length);
 		}
 
-		return { name: toHaxeName(name), value: Haxe(toHaxeType(def)), doc: memberdef };
+		return { name: toHaxeName(name), value: tv, doc: memberdef };
 	}
 
 	private function buildVariable (memberdef:Xml, realName:String) : VariableData
@@ -1291,7 +1314,7 @@ class Main
 		var initializer = getXmlContent(memberdef, "initializer").substr(2).trim();
 		var type = toHaxeType(getType(memberdef));
 
-		return { name: toHaxeName(name, true), native: name, initializer: initializer, type: Haxe(type), doc: memberdef };
+		return { name: toHaxeName(name, true), native: name, initializer: initializer, type: type, doc: memberdef };
 	}
 
 	private function buildClass (compounddef:Xml) : Void
@@ -1409,7 +1432,7 @@ class Main
 	private function getEithers (compounddef:Xml) : String
 	{
 		var it = compounddef.elementsNamed("sectiondef").next().elementsNamed("memberdef");
-		var types = new Array<String>();
+		var types = new Array<TypeValue>();
 
 		while (it.hasNext())
 		{
@@ -1422,7 +1445,7 @@ class Main
 
 				while (array_number > 0)
 				{
-					type = "Array<"+type+">";
+					type = Haxe("Array<"+getValue(type)+">");
 					array_number--;
 				}
 				types.push(type);
@@ -1479,7 +1502,7 @@ class Main
 		{
 			counter.typedefs++;
 			writeLine(file, "");
-			writeLine(file, 'typedef ${tp.name} = ${tp.value};');
+			writeLine(file, 'typedef ${tp.name} = ${getValue(tp.value)};');
 		}
 
 		// Enums //TODO: needs its own file?
@@ -1495,7 +1518,7 @@ class Main
 
 			for (value in en.values)
 			{
-				 writeLine(file, 'var ${value.name} = ${value.value};');
+				 writeLine(file, 'var ${value.name} = ${getValue(value.value)};');
 			}
 
 			closeBracket(file);
@@ -1523,7 +1546,7 @@ class Main
 				toBake.set(t.name, getValue(t.value));
 			}
 
-			var bake = function (type:Value) : String
+			var bake = function (type:TypeValue) : String
 			{
 				var value : String = getValue(type);
 
