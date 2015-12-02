@@ -1344,8 +1344,11 @@ class Main
 		var variables = new Array<VariableData>();
 		var typedefs = new Array<TypedefData>();
 
+		var nb = 0;
 		for (section in compounddef.elementsNamed("sectiondef"))
 		{
+			nb++;
+
 			switch (section.get("kind"))
 			{
 				case "public-func", "user-defined", "public-static-func", "public-type", "public-attrib", "public-static-attrib":
@@ -1423,10 +1426,13 @@ class Main
 			}
 		}
 
-		var c : ClassData = { name: haxeName, doc: compounddef, typedefs: typedefs, variables: variables, functions: functions, variables_stat: variables_stat, functions_stat: functions_stat, include: include, native: realName, sup: sup };
+		if (nb > 0) // ignore empty classes
+		{
+			var c : ClassData = { name: haxeName, doc: compounddef, typedefs: typedefs, variables: variables, functions: functions, variables_stat: variables_stat, functions_stat: functions_stat, include: include, native: realName, sup: sup };
 
-		var f = getFile(fileName);
-		f.classes.push(c);
+			var f = getFile(fileName);
+			f.classes.push(c);
+		}
 	}
 
 	private function getEithers (compounddef:Xml) : String
@@ -1498,11 +1504,20 @@ class Main
 		fd.typedefs.sort(function (a, b) {
 			return Reflect.compare(a.name, b.name);
 		});
-		for (tp in fd.typedefs)
+		var lastTD = null;
+		for (td in fd.typedefs)
 		{
+			if (lastTD != null && lastTD.name == td.name) //TODO: find duplication source
+			{
+				// ignore duplicates
+				continue;
+			}
+
 			counter.typedefs++;
 			writeLine(file, "");
-			writeLine(file, 'typedef ${tp.name} = ${getValue(tp.value)};');
+			writeLine(file, 'typedef ${td.name} = ${getValue(td.value)};');
+
+			lastTD = td;
 		}
 
 		// Enums //TODO: needs its own file?
