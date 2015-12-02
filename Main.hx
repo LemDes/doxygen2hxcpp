@@ -32,6 +32,10 @@ class PatchFile
 {
 	var ignored = new Map<String, Bool>();
 	public var typedefs = new Array<TypedefData>();
+	public var vars = new Map<String,Array<VariableData>>();
+	public var vars_static = new Map<String,Array<VariableData>>();
+	
+	public var updated_vars = new Map<String,String>();
 
 	public function new (?xml:Xml)
 	{
@@ -43,21 +47,48 @@ class PatchFile
 		{
 			// read patches
 
-			// Get ignored file
 			var root = xml.elementsNamed("root").next();
-			var it = root.elementsNamed("ignore").next().elementsNamed("item");
-			while (it.hasNext())
+			for (operation in root.elements())
 			{
-				var e = it.next();
-				ignored.set(e.get("name"), true);
-			}
-
-			// Get unspecified typedef
-			it = root.elementsNamed("add").next().elementsNamed("typedef");
-			while (it.hasNext())
-			{
-				var e = it.next();
-				typedefs.push({ name: e.get("name"), value: Haxe(e.get("is")), doc: null });
+				switch (operation.nodeName)
+				{
+					case "ignore" :
+						for (e in operation.elementsNamed("item"))
+							ignored.set(e.get("name"), true);
+					case "add" :
+						for (e in operation.elements())
+						{
+							switch (e.nodeName)
+							{
+								case "typedef":
+									typedefs.push({ name: e.get("name"), value: Haxe(e.get("is")), doc: null });
+									
+								case "var":
+									var file = e.get("file");
+									if (e.get("static") == "true")
+									{
+										if (vars_static.get(file) == null) { vars_static.set(file,new Array<VariableData>());}
+										vars_static.get(file).push({ name:e.get("name"), native:"", initializer:e.get("value"), type:Haxe(e.get("type")), doc:null });
+									}
+									else
+									{
+										if (vars.get(file) == null) { vars.set(file,new Array<VariableData>());}	
+										vars.get(file).push({ name:e.get("name"), native:"", initializer:e.get("value"), type:Haxe(e.get("type")), doc:null });
+									}
+							}
+						}
+					case "set" :
+						for (e in operation.elements())
+						{
+							switch (e.nodeName)
+							{
+								case "var":
+									var name = e.get("name");
+									var key = e.get("file")+"." +name;
+									updated_vars.set(key,e.get("value"));
+							}
+						}
+				}
 			}
 		}
 	}
@@ -1553,6 +1584,18 @@ class Main
 		// Classes
 		for (c in fd.classes)
 		{
+			// Add patched variables
+			if ( patches.vars.exists(c.name))
+			{
+				for (variable in patches.vars.get(c.name))
+					c.variables.push(variable);
+			}
+			if ( patches.vars_static.exists(c.name))
+			{
+				for (variable in patches.vars_static.get(c.name))
+					c.variables_stat.push(variable);
+			}
+			
 			counter.classes++;
 
 			var toBake = new Map<String, String>();
@@ -1595,6 +1638,8 @@ class Main
 				});
 				for (variable in c.variables)
 				{
+					if (patches.updated_vars.exists(c.name+"."+ variable.name))
+						variable.initializer =  patches.updated_vars.get(c.name+"."+ variable.name);
 					writeLine(file, "");
 					genDoc(variable.doc, file);
 					writeLine(file, '@:native("${variable.native}") public var ${variable.name} : ${bake(variable.type)}${if (variable.initializer != "") " = " + variable.initializer else ""};');
@@ -1649,8 +1694,10 @@ class Main
 			c.variables_stat.sort(function (a, b) {
 				return Reflect.compare(a.name, b.name);
 			});
-			for (variable in c.variables_stat)
+			for (variable in c.variables_stat) // TODO : if c.native and/or variable.native are empty strings
 			{
+				if (patches.updated_vars.exists(c.name+"."+ variable.name))
+					variable.initializer =  patches.updated_vars.get(c.name+"."+ variable.name);
 				writeLine(file, "");
 				genDoc(variable.doc, file);
 				writeLine(file, '@:native("${c.native}::${variable.native}") public static var ${variable.name} : ${bake(variable.type)}${if (variable.initializer != "") " = " + variable.initializer else ""};');

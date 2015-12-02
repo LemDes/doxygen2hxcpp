@@ -14,10 +14,10 @@
 		<typedef name="EventFunction" is="Dynamic" />
 		<typedef name="EventTable" is="Dynamic" />
 		
-		<var name="FILE_EXISTS_ANY" static="true" type="Int" value="=0x1FFF" file="Global"/>
+		<var name="FILE_EXISTS_ANY" static="true" type="Int" value="0x1FFF" file="Global"/>
 	</add>
 	
 	<set>
-		<var name="FILE_EXISTS_NO_FOLLOW" static="true" type="Int" value="=0x1000" file="Global"/>
+		<var name="FILE_EXISTS_NO_FOLLOW" value="0x1000" file="Global"/>
 	</set>
 </root>
