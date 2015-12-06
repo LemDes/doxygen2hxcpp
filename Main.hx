@@ -529,7 +529,15 @@ class Main
 		if (cppType.indexOf("::") > -1 && !cppType.startsWith("std::"))
 		{
 			var tmp = cppType.split("::");
-			return Haxe('${getValue(toHaxeType(tmp[0]))}.${getValue(toHaxeType(tmp[1]))}');
+
+			if (tmp[1].startsWith("const_iterator"))
+			{
+				return Haxe("Dynamic");
+			}
+			else
+			{
+				return Haxe('${getValue(toHaxeType(tmp[0]))}.${getValue(toHaxeType(tmp[1]))}');
+			}
 		}
 
 		var pointer = cppType.endsWith(" *");
