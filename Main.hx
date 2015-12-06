@@ -123,6 +123,7 @@ class Main
 		new Main();
 	}
 
+	private var typedefs_list = new Map<String, String>();
 	private var global : FileData;
 	private var files : Map<String, FileData>;
 	private var patches : PatchFile;
@@ -1049,6 +1050,7 @@ class Main
 					// put global typedef in their own files
 					var f = getFile(obj.name);
 					f.typedefs.push(obj);
+					typedefs_list.set(obj.name, getValue(obj.value));
 				}
 
 			case "variable":
@@ -1101,6 +1103,7 @@ class Main
 									{
 										var f = getFile(toHaxeName(t.name));
 										f.typedefs.push(t);
+										typedefs_list.set(t.name, getValue(t.value));
 									}
 								}
 
@@ -1651,6 +1654,9 @@ class Main
 				toBake.set(t.name, getValue(t.value));
 			}
 
+			// Add NameList => List<Name> //TODO: check it's really like this (wxWindowList, wxVariantList)
+			toBake.set(c.name + "List", "List<" + c.name + ">");
+
 			var bake = function (type:TypeValue) : String
 			{
 				var value : String = getValue(type);
@@ -1673,11 +1679,14 @@ class Main
 				{
 					writeLine(file, '@:include("${c.include}")');
 				}
+
 				if (c.native != "")
 				{
 					writeLine(file, '@:native("${c.native}")');
 				}
-				writeLine(file, 'extern class _${c.name}${if (c.sup != "") " extends " + c.sup + "._" + c.sup else ""}');
+
+				var ext = typedefs_list.exists(c.sup) ? typedefs_list.get(c.sup) : c.sup;
+				writeLine(file, 'extern class _${c.name}${if (c.sup != "") " extends " + ext + "._" + ext else ""}');
 				openBracket(file, false);
 
 				c.variables.sort(function (a, b) {
