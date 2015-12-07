@@ -1,6 +1,6 @@
 # [work in progress] doxygen2hxcpp
 
-Generate externs for c++ using doxygen files.
+Generate hxcpp externs using doxygen xml output.
 
 ## Usage
 
@@ -15,3 +15,9 @@ If you wish to test (the externs aren't yet working):
 * `haxe build.hxml`
 
 Now you can look into the output folder.
+
+## License
+
+Copyright (c) 2015 Valentin Lemière, Guillaume Desquesnes
+
+doxygen2hxcpp is licensed under the GPLv3, see LICENSE.md for more details.
